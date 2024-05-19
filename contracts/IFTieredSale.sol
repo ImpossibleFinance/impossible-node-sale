@@ -2,50 +2,81 @@
 pragma solidity ^0.8.9;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "./IFFundable.sol";
 import "./IFWhitelistable.sol";
 
-contract TieredSale is IFFundable, IFWhitelistable {
+contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelistable {
     using SafeERC20 for ERC20;
 
+    ERC20 public paymentToken;
+
+    string[] public tierIds;
+
+    // Constants for the roles
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+
+    // Structs for tiers and promo codes
     struct Tier {
         uint256 price;
         uint256 maxTotalPurchasable;
         uint256 maxAllocationPerWallet;
+        uint8 bonusPercentage;  // Additional bonus percentage for this tier
         bytes32 whitelistRootHash;
         bool isHalt;
         bool isIntegerSale;
     }
 
     struct PromoCode {
-        uint discountPercentage;
-        address referrer;
-        uint256 totalReferralRewards;
+        uint8 discountPercentage;
+        address promoCodeOwnerAddress;
+        address masterOwnerAddress;
+        uint256 promoCodeOwnerEarnings;
+        uint256 masterOwnerEarnings;
+        uint256 totalPurchased;
     }
 
+    // State variables
     mapping(string => Tier) public tiers;
     mapping(string => mapping(address => uint256)) public purchasedAmountPerTier;
-    mapping(string => uint256) public totalPurchasedAmount;
+    mapping(string => uint256) public codePurchaseAmount;
+    mapping(string => uint256) public saleTokenPurchasedByTier;
     mapping(string => PromoCode) public promoCodes;
-    mapping(address => uint256) public claimableTokens;
 
+    // Events
     event TierUpdated(string tierId);
     event PurchasedInTier(address indexed buyer, string tierId, uint256 amount, string promoCode);
     event ReferralRewardWithdrawn(address referrer, uint256 amount);
 
+    // Constructor
     constructor(
         ERC20 _paymentToken,
+        ERC20 _saleToken,
         uint256 _startTime,
         uint256 _endTime,
         address _funder
     )
-        IFFundable(_paymentToken, _paymentToken, _startTime, _endTime, _funder)
+        IFFundable(_paymentToken, _saleToken, _startTime, _endTime, _funder)
         IFWhitelistable()
-    {}
+    {
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _setupRole(OPERATOR_ROLE, msg.sender);
+        paymentToken = _paymentToken;
+    }
 
+    // Operator management functions
+    function addOperator(address operator) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        grantRole(OPERATOR_ROLE, operator);
+    }
+
+    function removeOperator(address operator) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        revokeRole(OPERATOR_ROLE, operator);
+    }
+
+    // Tier management
     function setTier(
         string memory _tierId,
         uint256 _price,
@@ -53,26 +84,33 @@ contract TieredSale is IFFundable, IFWhitelistable {
         uint256 _maxAllocationPerWallet,
         bytes32 _whitelistRootHash,
         bool _isHalt,
-        bool _isIntegerSale
-    ) public onlyOwner {
+        bool _isIntegerSale,
+        uint8 _bonusPercentage
+    ) public {
+        require(hasRole(OPERATOR_ROLE, msg.sender) || hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Not authorized");
         tiers[_tierId] = Tier({
             price: _price,
             maxTotalPurchasable: _maxTotalPurchasable,
             maxAllocationPerWallet: _maxAllocationPerWallet,
             whitelistRootHash: _whitelistRootHash,
             isHalt: _isHalt,
-            isIntegerSale: _isIntegerSale
+            isIntegerSale: _isIntegerSale,
+            bonusPercentage: _bonusPercentage
         });
-
+        tierIds.push(_tierId);
         emit TierUpdated(_tierId);
     }
 
-    function addPromoCode(string memory _code, uint _discountPercentage, address _referrer) public onlyOwner {
+
+    function addPromoCode(string memory _code, uint8 _discountPercentage, address _promoCodeOwnerAddress, address _masterOwnerAddress) public onlyOwner {
         require(_discountPercentage <= 100, "Invalid discount percentage");
         promoCodes[_code] = PromoCode({
             discountPercentage: _discountPercentage,
-            referrer: _referrer,
-            totalReferralRewards: 0
+            promoCodeOwnerAddress: _promoCodeOwnerAddress,
+            masterOwnerAddress: _masterOwnerAddress,
+            promoCodeOwnerEarnings: 0,
+            masterOwnerEarnings: 0,
+            totalPurchased: 0
         });
     }
 
@@ -90,75 +128,86 @@ contract TieredSale is IFFundable, IFWhitelistable {
         executePurchase(_tierId, _amount, discountedPrice, _promoCode);
     }
 
-    function executePurchase(string memory _tierId, uint256 _amount, uint256 _price, string memory _promoCode) private {
+    function executePurchase (string memory _tierId, uint256 _amount, uint256 _price, string memory _promoCode) private nonReentrant  {
         Tier storage tier = tiers[_tierId];
         require(!tier.isHalt, "Purchases in this tier are currently halted");
-        _validatePromoCode(_promoCode);
-        if (tier.isIntegerSale) {
-            require(_amount % tier.price == 0, "Can only purchase integer amounts in this tier");
-        }
+        require(_amount % tier.price == 0, "Can only purchase integer amounts in this tier");
         require(
             purchasedAmountPerTier[_tierId][msg.sender] + _amount <= tier.maxAllocationPerWallet,
             "Amount exceeds wallet's maximum allocation for this tier"
         );
         require(
-            saleTokenPurchased + _amount <= tier.maxTotalPurchasable,
+            saleTokenPurchasedByTier[_tierId] + _amount <= tier.maxTotalPurchasable,
             "Amount exceeds tier's maximum total purchasable"
         );
 
         purchasedAmountPerTier[_tierId][msg.sender] += _amount;
-        totalPurchasedAmount[msg.sender] += _amount;
-        saleTokenPurchased += _amount;
-        claimableTokens[msg.sender] += _amount;
-        uint256 totalCost = _amount * _price;
-        paymentToken.safeTransferFrom(msg.sender, address(this), totalCost);
+        saleTokenPurchasedByTier[_tierId] += _amount;
 
-        // Calculate and allocate referral reward
-        uint256 referralReward = totalCost * globalReferralRewardPercentage / 100;
-        promoCodes[_promoCode].totalReferralRewards += referralReward;
+        uint256 totalCost = _amount * _price;
+        uint256 baseOwnerPercentage = totalCost * 8 / 100;
+        uint256 masterOwnerPercentage = totalCost * 2 / 100;
+        uint256 bonus = totalCost * tier.bonusPercentage / 100;
+
+        promoCodes[_promoCode].promoCodeOwnerEarnings += baseOwnerPercentage + bonus;
+        promoCodes[_promoCode].masterOwnerEarnings += masterOwnerPercentage;
+
+        paymentToken.safeTransferFrom(msg.sender, address(this), totalCost);
 
         emit PurchasedInTier(msg.sender, _tierId, _amount, _promoCode);
     }
 
-    function cash() external onlyOwner {
-        uint256 totalClaimable = getCurrentClaimableToken();
-        require(totalClaimable > 0, "No tokens available to cash");
 
-        paymentToken.safeTransfer(owner(), totalClaimable);
-        emit Cash(owner(), totalClaimable, 0);
-    }
-
-    function getCurrentClaimableToken() public view returns (uint256) {
-        uint256 totalClaimable = 0;
-        for (uint i = 0; i < tiers.length; i++) {
-            totalClaimable += claimableTokens[tiers[i]];
+    function getSaleTokensSold() override internal view returns (uint256 amount) {
+        uint256 tokenSold = 0;
+        for (uint i = 0; i < tierIds.length; i++) {
+            if (tiers[tierIds[i]].price == 0) {
+                continue;
+            }
+            tokenSold += saleTokenPurchasedByTier[tierIds[i]];
         }
-        return totalClaimable;
+        return tokenSold;
     }
 
-    function withdrawReferralRewards(string memory _promoCode) public {
+
+    function withdrawReferralRewards (string memory _promoCode) public nonReentrant  {
         require(bytes(_promoCode).length > 0, "Invalid promo code");
         PromoCode storage promo = promoCodes[_promoCode];
-        _validatePromoCode(_promoCode);
-        require(msg.sender == promo.referrer, "Not the referrer");
-        require(promo.totalReferralRewards > 0, "No rewards available");
+        require(msg.sender == promo.promoCodeOwnerAddress || msg.sender == promo.masterOwnerAddress, "Unauthorized");
 
-        uint256 reward = promo.totalReferralRewards;
-        promo.totalReferralRewards = 0;
+        uint256 reward = 0;
+        if (msg.sender == promo.promoCodeOwnerAddress) {
+            reward = promo.promoCodeOwnerEarnings;
+            promo.promoCodeOwnerEarnings = 0;
+        } else if (msg.sender == promo.masterOwnerAddress) {
+            reward = promo.masterOwnerEarnings;
+            promo.masterOwnerEarnings = 0;
+        }
+
+        require(reward > 0, "No rewards available");
         paymentToken.safeTransfer(msg.sender, reward);
 
         emit ReferralRewardWithdrawn(msg.sender, reward);
     }
 
     function _validatePromoCode(string memory _promoCode) internal view {
-        if (_promoCode.length != 42) {
+        if (bytes(_promoCode).length != 42) {
             return;
         }
         address promoCodeAddress;
         assembly {
             promoCodeAddress := mload(add(_promoCode, 20))
         }
+
+        uint256 tokenSold = 0;
+        for (uint i = 0; i < tierIds.length; i++) {
+            if (tiers[tierIds[i]].price == 0) {
+                continue;
+            }
+            tokenSold += purchasedAmountPerTier[tierIds[i]][promoCodeAddress];
+        }
+        require(tokenSold > 0, "Promo code owner has not purchased any token");
         // if the promo code is an address, check if it has purchased any node
-        require(totalPurchasedAmount[promoCodeAddress] > 0, "Invalid promo code");
+        require(codePurchaseAmount[_promoCode] > 0, "Invalid promo code");
     }
 }
