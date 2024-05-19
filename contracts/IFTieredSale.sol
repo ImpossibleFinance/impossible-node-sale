@@ -127,7 +127,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         string memory _promoCode,
         uint256 _allocation
     ) public {
-        require(MerkleProof.verify(_merkleProof, tiers[_tierId].whitelistRootHash, keccak256(abi.encodePacked(msg.sender, _allocation))), "Invalid proof");
+        require(whitelistRootHash == bytes32(0) || MerkleProof.verify(_merkleProof, tiers[_tierId].whitelistRootHash, keccak256(abi.encodePacked(msg.sender, _allocation))), "Invalid proof");
         require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
         uint discount = bytes(_promoCode).length > 0 ? promoCodes[_promoCode].discountPercentage : 0;
         require(discount > 0, 'Invalid promo code');
@@ -217,5 +217,10 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         require(tokenSold > 0, "Promo code owner has not purchased any token");
         // if the promo code is an address, check if it has purchased any node
         require(codePurchaseAmount[_promoCode] > 0, "Invalid promo code");
+    }
+
+    // Override the renounceOwnership function to disable it
+    function renounceOwnership() public pure override{
+        revert("ownership renunciation is disabled");
     }
 }

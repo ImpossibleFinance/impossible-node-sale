@@ -15,7 +15,7 @@ describe('TieredSale Contract', function () {
     let wallets: SignerWithAddress[]
 
 
-    const tierId = 'public1'
+    const tierId = 'whitelist1'
     const promoCode = 'SAVE20'
 
     const operatorRole = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('OPERATOR_ROLE'))
@@ -106,7 +106,7 @@ describe('TieredSale Contract', function () {
                 Array(wallets.length).fill(nodeAllocated)
             )
             await tieredSale.connect(operator).setTier(
-                'public1',  // tierId
+                tierId,  // tierId
                 ethers.utils.parseEther('1'),  // price
                 maxTotalPurchasable,  // maxTotalPurchasable
                 maxPurchasePerWallet,  // maxPurchasePerWallet
@@ -193,6 +193,28 @@ describe('TieredSale Contract', function () {
                 .to.emit(tieredSale, 'ReferralRewardWithdrawn')
                 .withArgs(referrer.address, expectedOwnerEarnings) // Based on the previous test's expected earnings
         })
+
+        it('should allow purchase from any wallet if whitelistRootHash is empty', async function () {
+            await tieredSale.connect(operator).setTier(
+                tierId,  // tierId
+                ethers.utils.parseEther('1'),  // price
+                maxTotalPurchasable,  // maxTotalPurchasable
+                maxPurchasePerWallet,  // maxPurchasePerWallet
+                ethers.constants.HashZero, // empty root hash
+                false,  // isWhitelisted
+                true,  // isPublic
+                5  // bonusPercentage
+            ).then((tx: { wait: () => any }) => tx.wait())
+
+            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+                tierId,
+                1,
+                computeMerkleProofByAddress(leaves, addressValMap, user.address),  // merkleProof
+                promoCode,
+                nodeAllocated
+            )
+        })
+
     })
 
     // Add more tests for purchasing, promo codes, and other functionalities
