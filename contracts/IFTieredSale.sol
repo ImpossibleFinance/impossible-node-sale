@@ -21,9 +21,9 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
 
     // Structs for tiers and promo codes
     struct Tier {
-        uint256 price;
-        uint256 maxTotalPurchasable;
-        uint256 maxAllocationPerWallet;
+        uint256 price;  // in gwei
+        uint256 maxTotalPurchasable;  // in ether
+        uint256 maxAllocationPerWallet;  // in ether
         uint8 bonusPercentage;  // Additional bonus percentage for this tier
         bytes32 whitelistRootHash;
         bool isHalt;
@@ -34,22 +34,23 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         uint8 discountPercentage;
         address promoCodeOwnerAddress;
         address masterOwnerAddress;
-        uint256 promoCodeOwnerEarnings;
-        uint256 masterOwnerEarnings;
-        uint256 totalPurchased;
+        uint256 promoCodeOwnerEarnings;  // in gwei
+        uint256 masterOwnerEarnings;  // in gwei
+        uint256 totalPurchased; // in ether
     }
 
     // State variables
     mapping(string => Tier) public tiers;
-    mapping(string => mapping(address => uint256)) public purchasedAmountPerTier;
-    mapping(string => uint256) public codePurchaseAmount;
-    mapping(string => uint256) public saleTokenPurchasedByTier;
+    mapping(string => mapping(address => uint256)) public purchasedAmountPerTier;  // tierId => address => amount in ether
+    mapping(string => uint256) public codePurchaseAmount;  // promo code => total purchased amount in ether
+    mapping(string => uint256) public saleTokenPurchasedByTier;  // tierId => total purchased amount in ether
     mapping(string => PromoCode) public promoCodes;
 
     // Events
     event TierUpdated(string tierId);
     event PurchasedInTier(address indexed buyer, string tierId, uint256 amount, string promoCode);
     event ReferralRewardWithdrawn(address referrer, uint256 amount);
+    event PromoCodeAdded(string code, uint8 discountPercentage, address promoCodeOwnerAddress, address masterOwnerAddress);
 
     // Constructor
     constructor(
@@ -65,6 +66,11 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _setupRole(OPERATOR_ROLE, msg.sender);
         paymentToken = _paymentToken;
+    }
+
+    modifier onlyOperator() {
+        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender) || hasRole(OPERATOR_ROLE, msg.sender),  "Not authorized");
+        _;
     }
 
     // Operator management functions
@@ -86,8 +92,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         bool _isHalt,
         bool _isIntegerSale,
         uint8 _bonusPercentage
-    ) public {
-        require(hasRole(OPERATOR_ROLE, msg.sender) || hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Not authorized");
+    ) public onlyOperator {
         tiers[_tierId] = Tier({
             price: _price,
             maxTotalPurchasable: _maxTotalPurchasable,
@@ -102,7 +107,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
     }
 
 
-    function addPromoCode(string memory _code, uint8 _discountPercentage, address _promoCodeOwnerAddress, address _masterOwnerAddress) public onlyOwner {
+    function addPromoCode(string memory _code, uint8 _discountPercentage, address _promoCodeOwnerAddress, address _masterOwnerAddress) public onlyOperator {
         require(_discountPercentage <= 100, "Invalid discount percentage");
         promoCodes[_code] = PromoCode({
             discountPercentage: _discountPercentage,
@@ -112,6 +117,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
             masterOwnerEarnings: 0,
             totalPurchased: 0
         });
+        emit PromoCodeAdded(_code, _discountPercentage, _promoCodeOwnerAddress, _masterOwnerAddress);
     }
 
     function whitelistedPurchaseInTierWithCode(
@@ -124,14 +130,16 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         require(MerkleProof.verify(_merkleProof, tiers[_tierId].whitelistRootHash, keccak256(abi.encodePacked(msg.sender, _allocation))), "Invalid proof");
         require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
         uint discount = bytes(_promoCode).length > 0 ? promoCodes[_promoCode].discountPercentage : 0;
-        uint discountedPrice = tiers[_tierId].price * (100 - discount) / 100;
+        require(discount > 0, 'Invalid promo code');
+        uint discountedPrice = tiers[_tierId].price * (100 - discount) / 100;  // in gwei
         executePurchase(_tierId, _amount, discountedPrice, _promoCode);
     }
 
     function executePurchase (string memory _tierId, uint256 _amount, uint256 _price, string memory _promoCode) private nonReentrant  {
         Tier storage tier = tiers[_tierId];
         require(!tier.isHalt, "Purchases in this tier are currently halted");
-        require(_amount % tier.price == 0, "Can only purchase integer amounts in this tier");
+        // require(_amount % tier.price == 0, "Can only purchase integer amounts in this tier");
+        require(_amount % 1 == 0, "Can only purchase integer amounts in this tier");
         require(
             purchasedAmountPerTier[_tierId][msg.sender] + _amount <= tier.maxAllocationPerWallet,
             "Amount exceeds wallet's maximum allocation for this tier"
@@ -144,7 +152,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         purchasedAmountPerTier[_tierId][msg.sender] += _amount;
         saleTokenPurchasedByTier[_tierId] += _amount;
 
-        uint256 totalCost = _amount * _price;
+        uint256 totalCost = _amount * _price;  // in gwei
         uint256 baseOwnerPercentage = totalCost * 8 / 100;
         uint256 masterOwnerPercentage = totalCost * 2 / 100;
         uint256 bonus = totalCost * tier.bonusPercentage / 100;
@@ -173,7 +181,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
     function withdrawReferralRewards (string memory _promoCode) public nonReentrant  {
         require(bytes(_promoCode).length > 0, "Invalid promo code");
         PromoCode storage promo = promoCodes[_promoCode];
-        require(msg.sender == promo.promoCodeOwnerAddress || msg.sender == promo.masterOwnerAddress, "Unauthorized");
+        require(msg.sender == promo.promoCodeOwnerAddress || msg.sender == promo.masterOwnerAddress, "Not promo code owner or master owner");
 
         uint256 reward = 0;
         if (msg.sender == promo.promoCodeOwnerAddress) {
