@@ -18,7 +18,10 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
 
     string[] public tierIds;
 
-    uint256 public totalRewardAccumulated;
+    // total reward unclaimed by referrers
+    // some rewards might not be valid
+    // this number assumes all rewards are valid
+    uint256 public totalRewardsUnclaimed;
 
     // Constants for the roles
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
@@ -168,7 +171,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         uint256 masterOwnerPercentage = totalCost * 2 / 100;
         uint256 bonus = totalCost * tier.bonusPercentage / 100;
 
-        totalRewardAccumulated += baseOwnerPercentage + masterOwnerPercentage + bonus;
+        totalRewardsUnclaimed += baseOwnerPercentage + masterOwnerPercentage + bonus;
         promoCodes[_promoCode].promoCodeOwnerEarnings += baseOwnerPercentage + bonus;
         promoCodes[_promoCode].masterOwnerEarnings += masterOwnerPercentage;
 
@@ -233,8 +236,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         // to make sure there are enough payment tokens to be withdrawn by the referrers
         uint256 paymentTokenBal = paymentToken.balanceOf(address(this));
         require(paymentTokenBal > 0, "No payment token to cash");
-        require(paymentTokenBal > totalRewardAccumulated, "Not enough payment token to cash");
-        uint256 withdrawAmount = paymentTokenBal - totalRewardAccumulated;
+        require(paymentTokenBal > totalRewardsUnclaimed, "Not enough payment token to cash");
+        uint256 withdrawAmount = paymentTokenBal - totalRewardsUnclaimed;
         paymentToken.safeTransfer(_msgSender(), withdrawAmount);
         emit Cash(_msgSender(), withdrawAmount, 0);
     }
