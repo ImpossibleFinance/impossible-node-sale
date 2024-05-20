@@ -223,6 +223,19 @@ abstract contract IFFundable is Ownable, ReentrancyGuard {
         emit Cash(_msgSender(), amount, 0);
     }
 
+    function cashAllPaymentToken() external onlyCasherOrOwner {
+        // Get amount of payment token received
+        uint256 paymentTokenBal = paymentToken.balanceOf(address(this));
+
+        // not to revert if there's no payment token to facilitate operation
+
+        // Transfer payment tokens to the caller
+        paymentToken.safeTransfer(_msgSender(), paymentTokenBal);
+
+        // Emit an event for this cashing
+        emit Cash(_msgSender(), paymentTokenBal, 0);
+    }
+
 
     // Retrieve tokens erroneously sent in to this address
     function emergencyTokenRetrieve(address token) public onlyOwner onlyAfterSale {
