@@ -188,6 +188,22 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         return tokenSold;
     }
 
+    function haltAllTiers() public onlyOperator {
+        for (uint i = 0; i < tierIds.length; i++) {
+            tiers[tierIds[i]].isHalt = true;
+        }
+    }
+
+    function unhaltAllTiers() public onlyOperator {
+        for (uint i = 0; i < tierIds.length; i++) {
+            tiers[tierIds[i]].isHalt = false;
+        }
+    }
+
+    function updateWhitelist(string memory _tierId, bytes32 _whitelistRootHash) public onlyOperator {
+        tiers[_tierId].whitelistRootHash = _whitelistRootHash;
+    }
+
 
     function withdrawReferralRewards (string memory _promoCode) public nonReentrant  {
         require(bytes(_promoCode).length > 0, "Invalid promo code");
