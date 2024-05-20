@@ -4,15 +4,17 @@ import { Contract } from 'ethers'
 import { computeMerkleProofByAddress, computeMerkleRoot } from './merkleWhitelist'
 import { computeMerkleRootWithAllocation } from './test-IFFixedSale'
 import { SignerWithAddress } from '@nomiclabs/hardhat-ethers/signers'
+import { getBlockTime, mineTimeDelta } from './helpers'
 
 describe('TieredSale Contract', function () {
     let tieredSale: Contract
     let deployer: SignerWithAddress, operator: SignerWithAddress, user: SignerWithAddress, referrer: SignerWithAddress
     let startTime: number
     let endTime: number
-    let paymentToken: any
-    let saleToken: any
+    let paymentToken: Contract
+    let saleToken: Contract
     let wallets: SignerWithAddress[]
+    let fundAmount = 1000  // 1000 tokens
 
 
     const tierId = 'whitelist1'
@@ -49,7 +51,7 @@ describe('TieredSale Contract', function () {
         await tieredSale.deployed()
 
         // Mint sale tokens to the TieredSale contract to cover possible purchases
-        await saleToken.mint(tieredSale.address, ethers.utils.parseEther('1000')).then((tx: { wait: () => any }) => tx.wait())
+        await saleToken.mint(tieredSale.address, fundAmount).then((tx: { wait: () => any }) => tx.wait())
 
         // Setup roles
         await tieredSale.addOperator(operator.getAddress()).then((tx: { wait: () => any }) => tx.wait())
@@ -118,7 +120,7 @@ describe('TieredSale Contract', function () {
 
             await tieredSale.connect(operator).addPromoCode(promoCode, discount, referrer.address, operator.address).then((tx: { wait: () => any }) => tx.wait())
 
-            await paymentToken.connect(user).approve(tieredSale.address, allocationAmount)
+            await paymentToken.connect(user).approve(tieredSale.address, allocationAmount).then((tx: { wait: () => any }) => tx.wait())
         })
     
         it('should allow purchasing with a valid promo code and apply discount', async function () {
@@ -215,7 +217,63 @@ describe('TieredSale Contract', function () {
             )
         })
 
-    })
+        it('should prevent purchases when tier is halted and allow when resumed', async function () {
+            // Halting the tier
+            await tieredSale.connect(deployer).setTier(tierId, price, allocationAmount, allocationAmount, ethers.constants.HashZero, true, true, 0)
+            // Attempt to purchase in a halted tier should fail
+            await expect(tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+                tierId,
+                1,
+                [],
+                promoCode,
+                allocationAmount
+            )).to.be.revertedWith('Purchases in this tier are currently halted')
+    
+            // Resuming the tier
+            await tieredSale.connect(deployer).setTier(tierId, price, allocationAmount, allocationAmount, ethers.constants.HashZero, false, true, 0)
+            // Purchase in resumed tier should succeed
+            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+                tierId,
+                1,
+                [],
+                promoCode,
+                allocationAmount,
+            )
+        })
+    
+        it('should allow to cash out payment tokens', async function () {
+            await tieredSale.connect(deployer).setTier(tierId, price, allocationAmount, allocationAmount, ethers.constants.HashZero, false, true, 0)
+            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+                tierId,
+                1,
+                [],
+                promoCode,
+                allocationAmount,
+            )
+            const balanceBefore = await paymentToken.balanceOf(deployer.address)
+            await tieredSale.connect(deployer).cashPaymentToken(1)
+            const balanceAfter = await paymentToken.balanceOf(deployer.address)
+    
+            expect(balanceAfter.sub(balanceBefore)).to.equal(1)
+        })
+    
+        it('should allow to cash out sale tokens', async function () {
+            const numPurchase = 1
+            await tieredSale.connect(deployer).setTier(tierId, price, allocationAmount, allocationAmount, ethers.constants.HashZero, false, true, 0)
+            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+                tierId,
+                numPurchase,
+                [],
+                promoCode,
+                allocationAmount,
+            )
+            mineTimeDelta(endTime - await getBlockTime())
+            const balanceBefore = await saleToken.balanceOf(deployer.address)
+            await tieredSale.connect(deployer).cash()
+            const balanceAfter = await saleToken.balanceOf(deployer.address)
+    
+            expect(balanceAfter.sub(balanceBefore)).to.be.equals((fundAmount - numPurchase).toString())
+        })
 
-    // Add more tests for purchasing, promo codes, and other functionalities
+    })
 })

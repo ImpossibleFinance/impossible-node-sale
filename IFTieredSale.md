@@ -33,7 +33,7 @@
 
     Deploy the Contract:
         Instantiate with initial parameters including payment and sale tokens, timing for the sale, and the initial funder/admin.
-    Set Operator Roles:
+    Set Operator and Casher Roles:
         Designate one or more addresses as operators to manage the sale dynamics.
     Configure Tiers:
         Define tiers with specific pricing, purchase caps, and whitelist roots.
@@ -43,6 +43,8 @@
         Buyers make purchases within allowed tiers using or without promo codes, as applicable.
     Claim Promo Code Profits:
         Operators or promo code masters claim accumulated profits from their codes.
+    Cash profits:
+        safeCashPaymentToken() assume all of the rewards are valid, making sure that there will always be enough payment tokens to be withdrawn by referrers. Admin can cash the remaining payment token using cashPaymentToken() after making sure everyone has withdrawn the reward
 
 4. Calculation of Promo Code Profits with Examples
 

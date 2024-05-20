@@ -14,7 +14,11 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
 
     ERC20 public paymentToken;
 
+    ERC20 public saleToken;
+
     string[] public tierIds;
+
+    uint256 public totalRewardAccumulated;
 
     // Constants for the roles
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
@@ -66,6 +70,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _setupRole(OPERATOR_ROLE, msg.sender);
         paymentToken = _paymentToken;
+        saleToken = _saleToken;
     }
 
     modifier onlyOperator() {
@@ -102,6 +107,12 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
             isIntegerSale: _isIntegerSale,
             bonusPercentage: _bonusPercentage
         });
+        // iterate through the tierIds array to check if the tierId already exists
+        for (uint i = 0; i < tierIds.length; i++) {
+            if (keccak256(abi.encodePacked(tierIds[i])) == keccak256(abi.encodePacked(_tierId))) {
+                return;
+            }
+        }
         tierIds.push(_tierId);
         emit TierUpdated(_tierId);
     }
@@ -128,9 +139,9 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         uint256 _allocation
     ) public {
         require(whitelistRootHash == bytes32(0) || MerkleProof.verify(_merkleProof, tiers[_tierId].whitelistRootHash, keccak256(abi.encodePacked(msg.sender, _allocation))), "Invalid proof");
-        require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
+        require(whitelistRootHash == bytes32(0) || purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
         uint discount = bytes(_promoCode).length > 0 ? promoCodes[_promoCode].discountPercentage : 0;
-        require(discount > 0, 'Invalid promo code');
+        // require(discount > 0, 'Invalid promo code');
         uint discountedPrice = tiers[_tierId].price * (100 - discount) / 100;  // in gwei
         executePurchase(_tierId, _amount, discountedPrice, _promoCode);
     }
@@ -157,6 +168,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         uint256 masterOwnerPercentage = totalCost * 2 / 100;
         uint256 bonus = totalCost * tier.bonusPercentage / 100;
 
+        totalRewardAccumulated += baseOwnerPercentage + masterOwnerPercentage + bonus;
         promoCodes[_promoCode].promoCodeOwnerEarnings += baseOwnerPercentage + bonus;
         promoCodes[_promoCode].masterOwnerEarnings += masterOwnerPercentage;
 
@@ -164,7 +176,6 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
 
         emit PurchasedInTier(msg.sender, _tierId, _amount, _promoCode);
     }
-
 
     function getSaleTokensSold() override internal view returns (uint256 amount) {
         uint256 tokenSold = 0;
@@ -193,9 +204,23 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         }
 
         require(reward > 0, "No rewards available");
+        totalRewardAccumulated -= reward;
         paymentToken.safeTransfer(msg.sender, reward);
 
         emit ReferralRewardWithdrawn(msg.sender, reward);
+    }
+
+    function safeCashPaymentToken() public onlyCasherOrOwner {
+        // leave the amount for withdrawalReferenceRewards
+        // some rewards might not be valid
+        // this function assumes that the rewards are valid
+        // to make sure there are enough payment tokens to be withdrawn by the referrers
+        uint256 paymentTokenBal = paymentToken.balanceOf(address(this));
+        require(paymentTokenBal > 0, "No payment token to cash");
+        require(paymentTokenBal > totalRewardAccumulated, "Not enough payment token to cash");
+        uint256 withdrawAmount = paymentTokenBal - totalRewardAccumulated;
+        paymentToken.safeTransfer(_msgSender(), withdrawAmount);
+        emit Cash(_msgSender(), withdrawAmount, 0);
     }
 
     function _validatePromoCode(string memory _promoCode) internal view {
