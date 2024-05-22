@@ -18,6 +18,12 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
 
     string[] public tierIds;
 
+    uint8 public baseOwnerPercentage = 8;
+
+    uint8 public masterOwnerPercentage = 2;
+
+    bool claimRewardsEnabled = true;
+
     // total reward unclaimed by referrers
     // some rewards might not be valid
     // this number assumes all rewards are valid
@@ -35,6 +41,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         bytes32 whitelistRootHash;
         bool isHalt;
         bool isIntegerSale;
+        bool allowPromoCode;
     }
 
     struct PromoCode {
@@ -122,6 +129,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
 
 
     function addPromoCode(string memory _code, uint8 _discountPercentage, address _promoCodeOwnerAddress, address _masterOwnerAddress) public onlyOperator {
+        require(allowPromoCode, "Promo code is not allowed")
         require(_discountPercentage <= 100, "Invalid discount percentage");
         promoCodes[_code] = PromoCode({
             discountPercentage: _discountPercentage,
@@ -141,6 +149,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         string memory _promoCode,
         uint256 _allocation
     ) public {
+        require(tiers[_tierId].allowPromoCode, "Promo code is not allowed")
         if (whitelistRootHash != bytes32(0)) {
             require(MerkleProof.verify(_merkleProof, whitelistRootHash, keccak256(abi.encodePacked(msg.sender))), "Invalid proof");
             require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
@@ -148,6 +157,19 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         uint discount = bytes(_promoCode).length > 0 ? promoCodes[_promoCode].discountPercentage : 0;
         uint discountedPrice = tiers[_tierId].price * (100 - discount) / 100;  // in gwei
         executePurchase(_tierId, _amount, discountedPrice, _promoCode);
+    }
+
+    function whitelistedPurchaseInTier(
+        string memory _tierId,
+        uint256 _amount,
+        bytes32[] calldata _merkleProof,
+        uint256 _allocation
+    ) public {
+        if (whitelistRootHash != bytes32(0)) {
+            require(MerkleProof.verify(_merkleProof, whitelistRootHash, keccak256(abi.encodePacked(msg.sender))), "Invalid proof");
+            require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
+        }
+        executePurchase(_tierId, _amount, tiers[_tierId].price, _promoCode);
     }
 
     function executePurchase (string memory _tierId, uint256 _amount, uint256 _price, string memory _promoCode) private nonReentrant  {
@@ -168,13 +190,13 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         saleTokenPurchasedByTier[_tierId] += _amount;
 
         uint256 totalCost = _amount * _price;  // in gwei
-        uint256 baseOwnerPercentage = totalCost * 8 / 100;
-        uint256 masterOwnerPercentage = totalCost * 2 / 100;
+        uint256 baseOwnerRewards = totalCost * baseOwnerPercentage / 100;
+        uint256 masterOwnerRewards = totalCost *  / 100;
         uint256 bonus = totalCost * tier.bonusPercentage / 100;
 
-        totalRewardsUnclaimed += baseOwnerPercentage + masterOwnerPercentage + bonus;
-        promoCodes[_promoCode].promoCodeOwnerEarnings += baseOwnerPercentage + bonus;
-        promoCodes[_promoCode].masterOwnerEarnings += masterOwnerPercentage;
+        totalRewardsUnclaimed += baseOwnerRewards + masterOwnerRewards + bonus;
+        promoCodes[_promoCode].promoCodeOwnerEarnings += baseOwnerRewards + bonus;
+        promoCodes[_promoCode].masterOwnerEarnings += masterOwnerRewards;
 
         paymentToken.safeTransferFrom(msg.sender, address(this), totalCost);
 
@@ -208,8 +230,25 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         tiers[_tierId].whitelistRootHash = _whitelistRootHash;
     }
 
+    function updateMaxTotalPurchasable(string memory _tierId, uint256 _maxTotalPurchasable) public onlyOperator {
+        tiers[_tierId].maxTotalPurchasable = _maxTotalPurchasable;
+    }
+
+    function updateWhitelist(string memory _tierId, bytes32 _whitelistRootHash) public onlyOperator {
+        tiers[_tierId].whitelistRootHash = _whitelistRootHash;
+    }
+
+    function updateIsHalt(string memory _tierId, bool _isHalt) public onlyOperator {
+        tiers[_tierId].isHalt = _isHalt;
+    }
+
+    function updateRewards(string memory _tierId, uint8 _baseOwnerPercentage, uint8 _masterOwnerPercentage) public onlyOperator {
+        tiers[_tierId].baseOwnerPercentage = _baseOwnerPercentage;
+        tiers[_tierId].masterOwnerPercentage = _masterOwnerPercentage;
+    }
 
     function withdrawReferralRewards (string memory _promoCode) public nonReentrant  {
+        require(claimRewardsEnabled, "Claim rewards is disabled");
         require(bytes(_promoCode).length > 0, "Invalid promo code");
         PromoCode storage promo = promoCodes[_promoCode];
         require(msg.sender == promo.promoCodeOwnerAddress || msg.sender == promo.masterOwnerAddress, "Not promo code owner or master owner");
