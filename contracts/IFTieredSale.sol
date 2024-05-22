@@ -250,6 +250,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
     function withdrawReferralRewards (string memory _promoCode) public nonReentrant  {
         require(claimRewardsEnabled, "Claim rewards is disabled");
         require(bytes(_promoCode).length > 0, "Invalid promo code");
+        require(_validatePromoCode(_promoCode), "Invalid promo code");
         PromoCode storage promo = promoCodes[_promoCode];
         require(msg.sender == promo.promoCodeOwnerAddress || msg.sender == promo.masterOwnerAddress, "Not promo code owner or master owner");
 
