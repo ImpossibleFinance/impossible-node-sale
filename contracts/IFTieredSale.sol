@@ -22,6 +22,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
 
     uint8 public masterOwnerPercentage = 2;
 
+    uint8 public addressPromoCodePercentage = 5;
+
     bool claimRewardsEnabled = true;
 
     // total reward unclaimed by referrers
@@ -40,8 +42,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         uint8 bonusPercentage;  // Additional bonus percentage for this tier
         bytes32 whitelistRootHash;
         bool isHalt;
-        bool isIntegerSale;
         bool allowPromoCode;
+        bool allowWalletPromoCode;
     }
 
     struct PromoCode {
@@ -104,33 +106,37 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         uint256 _maxTotalPurchasable,
         uint256 _maxAllocationPerWallet,
         bytes32 _whitelistRootHash,
+        uint8 _bonusPercentage,
         bool _isHalt,
-        bool _isIntegerSale,
-        uint8 _bonusPercentage
+        bool _allowPromoCode,
+        bool _allowWalletPromoCode
     ) public onlyOperator {
-        tiers[_tierId] = Tier({
-            price: _price,
-            maxTotalPurchasable: _maxTotalPurchasable,
-            maxAllocationPerWallet: _maxAllocationPerWallet,
-            whitelistRootHash: _whitelistRootHash,
-            isHalt: _isHalt,
-            isIntegerSale: _isIntegerSale,
-            bonusPercentage: _bonusPercentage
-        });
         // iterate through the tierIds array to check if the tierId already exists
         for (uint i = 0; i < tierIds.length; i++) {
             if (keccak256(abi.encodePacked(tierIds[i])) == keccak256(abi.encodePacked(_tierId))) {
                 return;
             }
         }
+        require(_bonusPercentage <= 100, "Invalid bonus percentage");
+        require(_price > 0, "Invalid price");
+
+        tiers[_tierId] = Tier({
+            price: _price,
+            maxTotalPurchasable: _maxTotalPurchasable,
+            maxAllocationPerWallet: _maxAllocationPerWallet,
+            whitelistRootHash: _whitelistRootHash,
+            bonusPercentage: _bonusPercentage,
+            isHalt: _isHalt,
+            allowPromoCode: _allowPromoCode,
+            allowWalletPromoCode: _allowWalletPromoCode
+        });
         tierIds.push(_tierId);
         emit TierUpdated(_tierId);
     }
 
 
     function addPromoCode(string memory _code, uint8 _discountPercentage, address _promoCodeOwnerAddress, address _masterOwnerAddress) public onlyOperator {
-        require(allowPromoCode, "Promo code is not allowed")
-        require(_discountPercentage <= 100, "Invalid discount percentage");
+        require(_discountPercentage > 0 && _discountPercentage <= 100, "Invalid discount percentage");
         promoCodes[_code] = PromoCode({
             discountPercentage: _discountPercentage,
             promoCodeOwnerAddress: _promoCodeOwnerAddress,
@@ -149,12 +155,23 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         string memory _promoCode,
         uint256 _allocation
     ) public {
-        require(tiers[_tierId].allowPromoCode, "Promo code is not allowed")
+        require(tiers[_tierId].allowPromoCode, "Promo code is not allowed");
         if (whitelistRootHash != bytes32(0)) {
             require(MerkleProof.verify(_merkleProof, whitelistRootHash, keccak256(abi.encodePacked(msg.sender))), "Invalid proof");
             require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
         }
-        uint discount = bytes(_promoCode).length > 0 ? promoCodes[_promoCode].discountPercentage : 0;
+
+        uint discount;
+        if (_isAddressPromoCode(_promoCode)) {
+            // all address promo codes have a fixed discount percentage
+            discount = addressPromoCodePercentage;
+        } else if (promoCodes[_promoCode].discountPercentage > 0){
+            // all other promo codes have a variable discount percentage
+            discount = promoCodes[_promoCode].discountPercentage;
+        } else {
+            discount = 0;
+        }
+
         uint discountedPrice = tiers[_tierId].price * (100 - discount) / 100;  // in gwei
         executePurchase(_tierId, _amount, discountedPrice, _promoCode);
     }
@@ -169,14 +186,13 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
             require(MerkleProof.verify(_merkleProof, whitelistRootHash, keccak256(abi.encodePacked(msg.sender))), "Invalid proof");
             require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
         }
-        executePurchase(_tierId, _amount, tiers[_tierId].price, _promoCode);
+        executePurchase(_tierId, _amount, tiers[_tierId].price, "");
     }
 
     function executePurchase (string memory _tierId, uint256 _amount, uint256 _price, string memory _promoCode) private nonReentrant  {
         Tier storage tier = tiers[_tierId];
         require(!tier.isHalt, "Purchases in this tier are currently halted");
-        // require(_amount % tier.price == 0, "Can only purchase integer amounts in this tier");
-        require(_amount % 1 == 0, "Can only purchase integer amounts in this tier");
+        require(_amount > 0, "Can only purchase non-zero amounts");
         require(
             purchasedAmountPerTier[_tierId][msg.sender] + _amount <= tier.maxAllocationPerWallet,
             "Amount exceeds wallet's maximum allocation for this tier"
@@ -190,13 +206,30 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         saleTokenPurchasedByTier[_tierId] += _amount;
 
         uint256 totalCost = _amount * _price;  // in gwei
-        uint256 baseOwnerRewards = totalCost * baseOwnerPercentage / 100;
-        uint256 masterOwnerRewards = totalCost *  / 100;
-        uint256 bonus = totalCost * tier.bonusPercentage / 100;
 
-        totalRewardsUnclaimed += baseOwnerRewards + masterOwnerRewards + bonus;
-        promoCodes[_promoCode].promoCodeOwnerEarnings += baseOwnerRewards + bonus;
-        promoCodes[_promoCode].masterOwnerEarnings += masterOwnerRewards;
+        // no need to validate address promo code at purchase
+        if (_isAddressPromoCode(_promoCode)) {
+            if (promoCodes[_promoCode].promoCodeOwnerAddress == address(0)) {
+                address promoCodeAddress;
+                assembly {
+                    promoCodeAddress := mload(add(_promoCode, 20))
+                }
+                promoCodes[_promoCode].promoCodeOwnerAddress = promoCodeAddress;
+            }
+            promoCodes[_promoCode].promoCodeOwnerEarnings += totalCost * addressPromoCodePercentage / 100;
+            promoCodes[_promoCode].totalPurchased += totalCost;
+        }
+        // calculate rewards if the promo code discount is not 0
+        else if  (promoCodes[_promoCode].discountPercentage != 0) {
+            uint256 baseOwnerRewards = totalCost * baseOwnerPercentage / 100;
+            uint256 masterOwnerRewards = totalCost * masterOwnerPercentage / 100;
+            uint256 bonus = totalCost * tier.bonusPercentage / 100;
+
+            totalRewardsUnclaimed += baseOwnerRewards + masterOwnerRewards + bonus;
+            promoCodes[_promoCode].promoCodeOwnerEarnings += baseOwnerRewards + bonus;
+            promoCodes[_promoCode].masterOwnerEarnings += masterOwnerRewards;
+            promoCodes[_promoCode].totalPurchased += totalCost;
+        }
 
         paymentToken.safeTransferFrom(msg.sender, address(this), totalCost);
 
@@ -214,38 +247,6 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         return tokenSold;
     }
 
-    function haltAllTiers() public onlyOperator {
-        for (uint i = 0; i < tierIds.length; i++) {
-            tiers[tierIds[i]].isHalt = true;
-        }
-    }
-
-    function unhaltAllTiers() public onlyOperator {
-        for (uint i = 0; i < tierIds.length; i++) {
-            tiers[tierIds[i]].isHalt = false;
-        }
-    }
-
-    function updateWhitelist(string memory _tierId, bytes32 _whitelistRootHash) public onlyOperator {
-        tiers[_tierId].whitelistRootHash = _whitelistRootHash;
-    }
-
-    function updateMaxTotalPurchasable(string memory _tierId, uint256 _maxTotalPurchasable) public onlyOperator {
-        tiers[_tierId].maxTotalPurchasable = _maxTotalPurchasable;
-    }
-
-    function updateWhitelist(string memory _tierId, bytes32 _whitelistRootHash) public onlyOperator {
-        tiers[_tierId].whitelistRootHash = _whitelistRootHash;
-    }
-
-    function updateIsHalt(string memory _tierId, bool _isHalt) public onlyOperator {
-        tiers[_tierId].isHalt = _isHalt;
-    }
-
-    function updateRewards(string memory _tierId, uint8 _baseOwnerPercentage, uint8 _masterOwnerPercentage) public onlyOperator {
-        tiers[_tierId].baseOwnerPercentage = _baseOwnerPercentage;
-        tiers[_tierId].masterOwnerPercentage = _masterOwnerPercentage;
-    }
 
     function withdrawReferralRewards (string memory _promoCode) public nonReentrant  {
         require(claimRewardsEnabled, "Claim rewards is disabled");
@@ -283,29 +284,75 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         emit Cash(_msgSender(), withdrawAmount, 0);
     }
 
-    function _validatePromoCode(string memory _promoCode) internal view {
-        if (bytes(_promoCode).length != 42) {
-            return;
+    function _isAddressPromoCode(string memory _promoCode) internal pure returns (bool) {
+        return bytes(_promoCode).length == 42;
+    }
+
+    function _validatePromoCode(string memory _promoCode) internal view returns (bool) {
+        if (bytes(_promoCode).length == 0) {
+            return false;
         }
+
+        // if the promo code is an address, check if it has purchased a node code
+        // if the promo code is not an address, check if it is added by the admin
+        if (!_isAddressPromoCode(_promoCode) && promoCodes[_promoCode].discountPercentage != 0) {
+            return true;
+        }
+
+        // prceed to check if the address has purchased a node
         address promoCodeAddress;
         assembly {
             promoCodeAddress := mload(add(_promoCode, 20))
         }
 
-        uint256 tokenSold = 0;
         for (uint i = 0; i < tierIds.length; i++) {
             if (tiers[tierIds[i]].price == 0) {
                 continue;
             }
-            tokenSold += purchasedAmountPerTier[tierIds[i]][promoCodeAddress];
+            if (purchasedAmountPerTier[tierIds[i]][promoCodeAddress] > 0) {
+                // return true if the address has purchased at least one node
+                return true;
+            }
         }
-        require(tokenSold > 0, "Promo code owner has not purchased any token");
-        // if the promo code is an address, check if it has purchased any node
-        require(codePurchaseAmount[_promoCode] > 0, "Invalid promo code");
+        return false;
     }
 
     // Override the renounceOwnership function to disable it
     function renounceOwnership() public pure override{
         revert("ownership renunciation is disabled");
+    }
+
+    // ops functions
+    function haltAllTiers() public onlyOperator {
+        for (uint i = 0; i < tierIds.length; i++) {
+            tiers[tierIds[i]].isHalt = true;
+        }
+    }
+
+    function unhaltAllTiers() public onlyOperator {
+        for (uint i = 0; i < tierIds.length; i++) {
+            tiers[tierIds[i]].isHalt = false;
+        }
+    }
+
+    function updateMaxTotalPurchasable(string memory _tierId, uint256 _maxTotalPurchasable) public onlyOperator {
+        tiers[_tierId].maxTotalPurchasable = _maxTotalPurchasable;
+    }
+
+    function updateWhitelist(string memory _tierId, bytes32 _whitelistRootHash) public onlyOperator {
+        tiers[_tierId].whitelistRootHash = _whitelistRootHash;
+    }
+
+    function updateIsHalt(string memory _tierId, bool _isHalt) public onlyOperator {
+        tiers[_tierId].isHalt = _isHalt;
+    }
+
+    function updateRewards(uint8 _baseOwnerPercentage, uint8 _masterOwnerPercentage) public onlyOperator {
+        baseOwnerPercentage = _baseOwnerPercentage;
+        masterOwnerPercentage = _masterOwnerPercentage;
+    }
+
+    function updateAddressRewards(uint8 _addressPromoCodePercentage) public onlyOperator {
+        addressPromoCodePercentage = _addressPromoCodePercentage;
     }
 }
