@@ -156,6 +156,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         uint256 _allocation
     ) public {
         require(tiers[_tierId].allowPromoCode, "Promo code is not allowed");
+        require(_validatePromoCode(_promoCode), "Invalid promo code");
         if (whitelistRootHash != bytes32(0)) {
             require(MerkleProof.verify(_merkleProof, whitelistRootHash, keccak256(abi.encodePacked(msg.sender))), "Invalid proof");
             require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
@@ -216,7 +217,9 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
                 }
                 promoCodes[_promoCode].promoCodeOwnerAddress = promoCodeAddress;
             }
-            promoCodes[_promoCode].promoCodeOwnerEarnings += totalCost * addressPromoCodePercentage / 100;
+            uint256 ownerRewards = totalCost * addressPromoCodePercentage / 100;
+            totalRewardsUnclaimed += ownerRewards;
+            promoCodes[_promoCode].promoCodeOwnerEarnings += ownerRewards;
             promoCodes[_promoCode].totalPurchased += totalCost;
         }
         // calculate rewards if the promo code discount is not 0
