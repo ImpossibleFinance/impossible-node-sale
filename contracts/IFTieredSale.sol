@@ -73,10 +73,9 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         ERC20 _paymentToken,
         ERC20 _saleToken,
         uint256 _startTime,
-        uint256 _endTime,
-        address _funder
+        uint256 _endTime
     )
-        IFFundable(_paymentToken, _saleToken, _startTime, _endTime, _funder)
+        IFFundable(_paymentToken, _saleToken, _startTime, _endTime, msg.sender)
         IFWhitelistable()
     {
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
@@ -174,6 +173,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         }
 
         uint discountedPrice = tiers[_tierId].price * (100 - discount) / 100;  // in gwei
+        codePurchaseAmount[code] += discountedPrice;
         executePurchase(_tierId, _amount, discountedPrice, _promoCode);
     }
 
@@ -203,6 +203,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
             "Amount exceeds tier's maximum total purchasable"
         );
 
+        totalPaymentReceived += _amount * _price;
         purchasedAmountPerTier[_tierId][msg.sender] += _amount;
         saleTokenPurchasedByTier[_tierId] += _amount;
 
