@@ -37,8 +37,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
     // Structs for tiers and promo codes
     struct Tier {
         uint256 price;  // in gwei
-        uint256 maxTotalPurchasable;  // in ether
-        uint256 maxAllocationPerWallet;  // in ether
+        uint256 maxTotalPurchasable;  // For fcfs. In ether
+        uint256 maxAllocationPerWallet;  // If it is 0, there is no limit. In ether
         uint8 bonusPercentage;  // Additional bonus percentage for this tier
         bytes32 whitelistRootHash;
         bool isHalt;
@@ -199,7 +199,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         require(!tier.isHalt, "Purchases in this tier are currently halted");
         require(_amount > 0, "Can only purchase non-zero amounts");
         require(
-            purchasedAmountPerTier[_tierId][msg.sender] + _amount <= tier.maxAllocationPerWallet,
+            tier.maxAllocationPerWallet != 0 && purchasedAmountPerTier[_tierId][msg.sender] + _amount <= tier.maxAllocationPerWallet,
             "Amount exceeds wallet's maximum allocation for this tier"
         );
         require(
