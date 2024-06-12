@@ -111,11 +111,6 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         bool _allowWalletPromoCode
     ) public onlyOperator {
         // iterate through the tierIds array to check if the tierId already exists
-        for (uint i = 0; i < tierIds.length; i++) {
-            if (keccak256(abi.encodePacked(tierIds[i])) == keccak256(abi.encodePacked(_tierId))) {
-                return;
-            }
-        }
         require(_bonusPercentage <= 100, "Invalid bonus percentage");
         require(_price > 0, "Invalid price");
 
@@ -129,13 +124,20 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
             allowPromoCode: _allowPromoCode,
             allowWalletPromoCode: _allowWalletPromoCode
         });
-        tierIds.push(_tierId);
         emit TierUpdated(_tierId);
+
+        for (uint i = 0; i < tierIds.length; i++) {
+            if (keccak256(abi.encodePacked(tierIds[i])) == keccak256(abi.encodePacked(_tierId))) {
+                return;
+            }
+        }
+        tierIds.push(_tierId);
     }
 
 
     function addPromoCode(string memory _code, uint8 _discountPercentage, address _promoCodeOwnerAddress, address _masterOwnerAddress) public onlyOperator {
         require(_discountPercentage > 0 && _discountPercentage <= 100, "Invalid discount percentage");
+        require(_promoCodeOwnerAddress != _masterOwnerAddress, "Promo code owner and master owner cannot be the same");
         promoCodes[_code] = PromoCode({
             discountPercentage: _discountPercentage,
             promoCodeOwnerAddress: _promoCodeOwnerAddress,
@@ -156,8 +158,9 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
     ) public {
         require(tiers[_tierId].allowPromoCode, "Promo code is not allowed");
         require(_validatePromoCode(_promoCode), "Invalid promo code");
-        if (whitelistRootHash != bytes32(0)) {
-            require(MerkleProof.verify(_merkleProof, whitelistRootHash, keccak256(abi.encodePacked(msg.sender))), "Invalid proof");
+        bytes32 tierWhitelistRootHash = tiers[_tierId].whitelistRootHash;
+        if (tierWhitelistRootHash != bytes32(0)) {
+            require(checkTierWhitelist(_tierId, msg.sender, _merkleProof, _allocation), "Invalid proof");
             require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
         }
 
@@ -173,7 +176,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         }
 
         uint discountedPrice = tiers[_tierId].price * (100 - discount) / 100;  // in gwei
-        codePurchaseAmount[code] += discountedPrice;
+        codePurchaseAmount[_promoCode] += discountedPrice;
         executePurchase(_tierId, _amount, discountedPrice, _promoCode);
     }
 
@@ -183,8 +186,9 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         bytes32[] calldata _merkleProof,
         uint256 _allocation
     ) public {
-        if (whitelistRootHash != bytes32(0)) {
-            require(MerkleProof.verify(_merkleProof, whitelistRootHash, keccak256(abi.encodePacked(msg.sender))), "Invalid proof");
+        bytes32 tierWhitelistRootHash = tiers[_tierId].whitelistRootHash;
+        if (tierWhitelistRootHash != bytes32(0)) {
+            require(checkTierWhitelist(_tierId, msg.sender, _merkleProof, _allocation), "Invalid proof");
             require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
         }
         executePurchase(_tierId, _amount, tiers[_tierId].price, "");
@@ -288,6 +292,19 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         emit Cash(_msgSender(), withdrawAmount, 0);
     }
 
+    // Returns true if user's allocation matches the one in merkle root, otherwise false
+    function checkTierWhitelist(string memory _tierId, address user, bytes32[] calldata merkleProof, uint256 allocation)
+        public
+        view
+        returns (bool)
+    {
+        // compute merkle leaf from input
+        bytes32 leaf = keccak256(abi.encodePacked(user, allocation));
+
+        // verify merkle proof
+        return MerkleProof.verify(merkleProof, tiers[_tierId].whitelistRootHash, leaf);
+    }
+
     function _isAddressPromoCode(string memory _promoCode) internal pure returns (bool) {
         return bytes(_promoCode).length == 42;
     }
@@ -358,5 +375,13 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
 
     function updateAddressRewards(uint8 _addressPromoCodePercentage) public onlyOperator {
         addressPromoCodePercentage = _addressPromoCodePercentage;
+    }
+
+    function updatePromoCodeAllowance(string memory _tierId, bool _allowPromoCode) public onlyOperator {
+        tiers[_tierId].allowPromoCode = _allowPromoCode;
+    }
+
+    function updateWalletPromoCodeAllowance(string memory _tierId, bool _allowWalletPromoCode) public onlyOperator {
+        tiers[_tierId].allowWalletPromoCode = _allowWalletPromoCode;
     }
 }
