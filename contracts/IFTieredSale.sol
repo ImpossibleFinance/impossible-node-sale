@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "./IFFundable.sol";
 import "./IFWhitelistable.sol";
 
+// Contract to manage tiered sales with promotional codes and whitelisting.
 contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelistable {
     using SafeERC20 for ERC20;
 
@@ -16,51 +17,50 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
 
     ERC20 public saleToken;
 
+
+    // Tier and promotion management
     string[] public tierIds;
+    mapping(string => Tier) public tiers;
+    mapping(string => mapping(address => uint256)) public purchasedAmountPerTier; // tierId => address => amount in ether
+    mapping(string => uint256) public codePurchaseAmount; // promo code => total purchased amount in ether
+    mapping(string => uint256) public saleTokenPurchasedByTier; // tierId => total purchased amount in ether
+    mapping(string => PromoCode) public promoCodes;
 
+    // Configuration percentages
     uint8 public baseOwnerPercentage = 8;
-
     uint8 public masterOwnerPercentage = 2;
-
     uint8 public addressPromoCodePercentage = 5;
 
-    bool claimRewardsEnabled = true;
+    // Reward claiming management
+    bool public claimRewardsEnabled = true;
+    uint256 public totalRewardsUnclaimed; // Total unclaimed rewards, assuming all are valid
 
-    // total reward unclaimed by referrers
-    // some rewards might not be valid
-    // this number assumes all rewards are valid
-    uint256 public totalRewardsUnclaimed;
-
-    // Constants for the roles
+    // Role constants
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
-    // Structs for tiers and promo codes
+// Structs for managing pricing tiers and promotional codes
     struct Tier {
-        uint256 price;  // in gwei
-        uint256 maxTotalPurchasable;  // For fcfs. In ether
-        uint256 maxAllocationPerWallet;  // If it is 0, there is no limit. In ether
-        uint8 bonusPercentage;  // Additional bonus percentage for this tier
-        bytes32 whitelistRootHash;
-        bool isHalt;
-        bool allowPromoCode;
-        bool allowWalletPromoCode;
+        uint256 price;  // Price per tier in gwei.
+        uint256 maxTotalPurchasable;  // Total limit per tier (0 means no limit), specified in ether.
+        uint256 maxAllocationPerWallet;  // Limit per wallet (0 means no limit), specified in ether.
+        uint8 bonusPercentage;  // Additional bonus percentage applicable for this tier.
+        bytes32 whitelistRootHash;  // Merkle root hash for whitelisting.
+        bool isHalt;  // Flag to halt transactions for this tier if set to true.
+        bool allowPromoCode;  // Flag to allow promo codes for this tier.
+        bool allowWalletPromoCode;  // Flag to allow promo codes specific to wallets.
     }
 
     struct PromoCode {
-        uint8 discountPercentage;
-        address promoCodeOwnerAddress;
-        address masterOwnerAddress;
-        uint256 promoCodeOwnerEarnings;  // in gwei
-        uint256 masterOwnerEarnings;  // in gwei
-        uint256 totalPurchased; // in ether
+        uint8 discountPercentage;  // Discount provided by the promo code, in percentage (1 - 100).
+        address promoCodeOwnerAddress;  // Address of the promo code owner.
+        address masterOwnerAddress;  // Address of the master owner who oversees this promo code.
+        uint256 promoCodeOwnerEarnings;  // Earnings accrued to the promo code owner, in gwei.
+        uint256 masterOwnerEarnings;  // Earnings accrued to the master owner, in gwei.
+        uint256 totalPurchased;  // Total value purchased using this promo code, in ether.
     }
 
+
     // State variables
-    mapping(string => Tier) public tiers;
-    mapping(string => mapping(address => uint256)) public purchasedAmountPerTier;  // tierId => address => amount in ether
-    mapping(string => uint256) public codePurchaseAmount;  // promo code => total purchased amount in ether
-    mapping(string => uint256) public saleTokenPurchasedByTier;  // tierId => total purchased amount in ether
-    mapping(string => PromoCode) public promoCodes;
 
     // Events
     event TierUpdated(string tierId);
@@ -84,6 +84,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         saleToken = _saleToken;
     }
 
+    // Access management
     modifier onlyOperator() {
         require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender) || hasRole(OPERATOR_ROLE, msg.sender),  "Not authorized");
         _;
@@ -110,7 +111,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         bool _allowPromoCode,
         bool _allowWalletPromoCode
     ) public onlyOperator {
-        // iterate through the tierIds array to check if the tierId already exists
+        // Validate input data
         require(_bonusPercentage <= 100, "Invalid bonus percentage");
         require(_price > 0, "Invalid price");
 
@@ -126,18 +127,29 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         });
         emit TierUpdated(_tierId);
 
+        // iterate through the tierIds array to check if the tierId already exists
         for (uint i = 0; i < tierIds.length; i++) {
             if (keccak256(abi.encodePacked(tierIds[i])) == keccak256(abi.encodePacked(_tierId))) {
-                return;
+                return; // Tier already exists
             }
         }
         tierIds.push(_tierId);
+        emit TierUpdated(_tierId);
     }
 
 
-    function addPromoCode(string memory _code, uint8 _discountPercentage, address _promoCodeOwnerAddress, address _masterOwnerAddress) public onlyOperator {
+    // Promotion code management
+    function addPromoCode(
+        string memory _code,
+        uint8 _discountPercentage,
+        address _promoCodeOwnerAddress,
+        address _masterOwnerAddress
+    ) public onlyOperator {
+        // Validate the discount percentage and owner addresses
         require(_discountPercentage > 0 && _discountPercentage <= 100, "Invalid discount percentage");
         require(_promoCodeOwnerAddress != _masterOwnerAddress, "Promo code owner and master owner cannot be the same");
+
+        // Add the promo code
         promoCodes[_code] = PromoCode({
             discountPercentage: _discountPercentage,
             promoCodeOwnerAddress: _promoCodeOwnerAddress,
@@ -149,6 +161,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         emit PromoCodeAdded(_code, _discountPercentage, _promoCodeOwnerAddress, _masterOwnerAddress);
     }
 
+    // Whitelisted purchase functions
     function whitelistedPurchaseInTierWithCode(
         string memory _tierId,
         uint256 _amount,
@@ -156,7 +169,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         string memory _promoCode,
         uint256 _allocation
     ) public {
-        require(tiers[_tierId].allowPromoCode, "Promo code is not allowed");
+        // Ensure promo codes are allowed for the tier and the promo code is valid
+        require(tiers[_tierId].allowPromoCode, "Promo code is not allowed for this tier");
         require(_validatePromoCode(_promoCode), "Invalid promo code");
         bytes32 tierWhitelistRootHash = tiers[_tierId].whitelistRootHash;
         if (tierWhitelistRootHash != bytes32(0)) {
@@ -164,20 +178,20 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
             require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
         }
 
-        uint discount;
-        if (_isAddressPromoCode(_promoCode)) {
-            // all address promo codes have a fixed discount percentage
-            discount = addressPromoCodePercentage;
-        } else if (promoCodes[_promoCode].discountPercentage > 0){
-            // all other promo codes have a variable discount percentage
-            discount = promoCodes[_promoCode].discountPercentage;
-        } else {
-            discount = 0;
-        }
-
+        uint discount = calculateDiscount(_promoCode);
         uint discountedPrice = tiers[_tierId].price * (100 - discount) / 100;  // in gwei
         codePurchaseAmount[_promoCode] += discountedPrice;
         executePurchase(_tierId, _amount, discountedPrice, _promoCode);
+    }
+
+    function calculateDiscount(string memory _promoCode) internal view returns (uint) {
+        uint discount;
+        if (_isAddressPromoCode(_promoCode)) {
+            discount = addressPromoCodePercentage; // Fixed discount for address-based promo codes
+        } else {
+            discount = promoCodes[_promoCode].discountPercentage; // Variable discount for other promo codes
+        }
+        return discount;
     }
 
     function whitelistedPurchaseInTier(
@@ -199,11 +213,11 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         require(!tier.isHalt, "Purchases in this tier are currently halted");
         require(_amount > 0, "Can only purchase non-zero amounts");
         require(
-            tier.maxAllocationPerWallet != 0 && purchasedAmountPerTier[_tierId][msg.sender] + _amount <= tier.maxAllocationPerWallet,
+            tier.maxAllocationPerWallet == 0 || purchasedAmountPerTier[_tierId][msg.sender] + _amount <= tier.maxAllocationPerWallet,
             "Amount exceeds wallet's maximum allocation for this tier"
         );
         require(
-            saleTokenPurchasedByTier[_tierId] + _amount <= tier.maxTotalPurchasable,
+            tier.maxTotalPurchasable == 0 || saleTokenPurchasedByTier[_tierId] + _amount <= tier.maxTotalPurchasable,
             "Amount exceeds tier's maximum total purchasable"
         );
 
