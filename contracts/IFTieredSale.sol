@@ -25,6 +25,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
     mapping(string => uint256) public codePurchaseAmount; // promo code => total purchased amount in ether
     mapping(string => uint256) public saleTokenPurchasedByTier; // tierId => total purchased amount in ether
     mapping(string => PromoCode) public promoCodes;
+    mapping(address => string[]) public ownerPromoCodes; // address => promo code
+    string[] public allPromoCodes;
 
     // Configuration percentages
     uint8 public baseOwnerPercentage = 8;
@@ -38,7 +40,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
     // Role constants
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
-// Structs for managing pricing tiers and promotional codes
+    // Structs for managing pricing tiers and promotional codes
     struct Tier {
         uint256 price;  // Price per tier in gwei.
         uint256 maxTotalPurchasable;  // Total limit per tier (0 means no limit), specified in ether.
@@ -48,6 +50,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         bool isHalt;  // Flag to halt transactions for this tier if set to true.
         bool allowPromoCode;  // Flag to allow promo codes for this tier.
         bool allowWalletPromoCode;  // Flag to allow promo codes specific to wallets.
+        uint256 startTime;  // Start time for this tier.
+        uint256 endTime;  // End time for this tier.
     }
 
     struct PromoCode {
@@ -109,7 +113,9 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         uint8 _bonusPercentage,
         bool _isHalt,
         bool _allowPromoCode,
-        bool _allowWalletPromoCode
+        bool _allowWalletPromoCode,
+        uint256 _startTime,
+        uint256 _endTime
     ) public onlyOperator {
         // Validate input data
         require(_bonusPercentage <= 100, "Invalid bonus percentage");
@@ -123,7 +129,10 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
             bonusPercentage: _bonusPercentage,
             isHalt: _isHalt,
             allowPromoCode: _allowPromoCode,
-            allowWalletPromoCode: _allowWalletPromoCode
+            allowWalletPromoCode: _allowWalletPromoCode,
+            startTime: _startTime,
+            endTime: _endTime
+
         });
         emit TierUpdated(_tierId);
 
@@ -148,6 +157,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         // Validate the discount percentage and owner addresses
         require(_discountPercentage > 0 && _discountPercentage <= 100, "Invalid discount percentage");
         require(_promoCodeOwnerAddress != _masterOwnerAddress, "Promo code owner and master owner cannot be the same");
+        require(promoCodes[_code].discountPercentage == 0, "Promo code already exists");
 
         // Add the promo code
         promoCodes[_code] = PromoCode({
@@ -158,6 +168,9 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
             masterOwnerEarnings: 0,
             totalPurchased: 0
         });
+        ownerPromoCodes[_promoCodeOwnerAddress].push(_code);
+        ownerPromoCodes[_masterOwnerAddress].push(_code);
+        allPromoCodes.push(_code);
         emit PromoCodeAdded(_code, _discountPercentage, _promoCodeOwnerAddress, _masterOwnerAddress);
     }
 
@@ -211,6 +224,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
     function executePurchase (string memory _tierId, uint256 _amount, uint256 _price, string memory _promoCode) private nonReentrant  {
         Tier storage tier = tiers[_tierId];
         require(!tier.isHalt, "Purchases in this tier are currently halted");
+        require(tier.startTime <= block.timestamp && block.timestamp <= tier.endTime, "Tier is not active");
         require(_amount > 0, "Can only purchase non-zero amounts");
         require(
             tier.maxAllocationPerWallet == 0 || purchasedAmountPerTier[_tierId][msg.sender] + _amount <= tier.maxAllocationPerWallet,
@@ -269,8 +283,33 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         return tokenSold;
     }
 
+    function withdrawReferenceRewards (address promoCodeOwner) public nonReentrant {
+        require(claimRewardsEnabled, "Claim rewards is disabled");
 
-    function withdrawReferralRewards (string memory _promoCode) public nonReentrant  {
+        // for each promo code owned by the address, withdraw the rewards
+        string[] memory promoCodesOwned = ownerPromoCodes[promoCodeOwner];
+        uint256 rewards = 0;
+        for (uint i = 0; i < promoCodesOwned.length; i++) {
+            PromoCode storage promo = promoCodes[promoCodesOwned[i]];
+
+            // it could be _masterOwnerAddress or _promoCodeOwnerAddress
+            if (promo.promoCodeOwnerAddress == promoCodeOwner) {
+                rewards += promo.promoCodeOwnerEarnings;
+                promo.promoCodeOwnerEarnings = 0;
+            } else if (promo.masterOwnerAddress == promoCodeOwner) {
+                rewards += promo.masterOwnerEarnings;
+                promo.masterOwnerEarnings = 0;
+            }
+        }
+        require(rewards > 0, "No rewards available");
+        totalRewardsUnclaimed -= rewards;
+        paymentToken.safeTransfer(msg.sender, rewards);
+
+        emit ReferralRewardWithdrawn(msg.sender, rewards);
+    }
+
+
+    function withdrawPromoCodelRewards (string memory _promoCode) public nonReentrant {
         require(claimRewardsEnabled, "Claim rewards is disabled");
         require(bytes(_promoCode).length > 0, "Invalid promo code");
         require(_validatePromoCode(_promoCode), "Invalid promo code");
@@ -397,5 +436,25 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
 
     function updateWalletPromoCodeAllowance(string memory _tierId, bool _allowWalletPromoCode) public onlyOperator {
         tiers[_tierId].allowWalletPromoCode = _allowWalletPromoCode;
+    }
+
+    function updateTierStartTime(string memory _tierId, uint256 _startTime) public onlyOperator {
+        tiers[_tierId].startTime = _startTime;
+    }
+
+    function updateTierEndTime(string memory _tierId, uint256 _endTime) public onlyOperator {
+        tiers[_tierId].endTime = _endTime;
+    }
+
+
+    // view function for ops
+    function allPromoCodeInfos(uint256 fromIdx, uint256 toIdx) public view returns (PromoCode[] memory) {
+        require(fromIdx < toIdx, "Invalid range");
+        require(toIdx <= allPromoCodes.length, "Invalid range");
+        PromoCode[] memory promoCodeInfos = new PromoCode[](toIdx - fromIdx);
+        for (uint i = fromIdx; i < toIdx; i++) {
+            promoCodeInfos[i - fromIdx] = promoCodes[allPromoCodes[i]];
+        }
+        return promoCodeInfos;
     }
 }
