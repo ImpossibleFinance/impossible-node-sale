@@ -283,7 +283,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         return tokenSold;
     }
 
-    function withdrawReferenceRewards (address promoCodeOwner) public nonReentrant {
+    function withdrawReferenceRewards () public nonReentrant {
+        address promoCodeOwner = msg.sender;
         require(claimRewardsEnabled, "Claim rewards is disabled");
 
         // for each promo code owned by the address, withdraw the rewards
@@ -448,7 +449,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
 
 
     // view function for ops
-    function allPromoCodeInfos(uint256 fromIdx, uint256 toIdx) public view returns (PromoCode[] memory) {
+    function allPromoCodeInfo(uint256 fromIdx, uint256 toIdx) public view returns (PromoCode[] memory) {
         require(fromIdx < toIdx, "Invalid range");
         require(toIdx <= allPromoCodes.length, "Invalid range");
         PromoCode[] memory promoCodeInfos = new PromoCode[](toIdx - fromIdx);
