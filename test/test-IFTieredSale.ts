@@ -189,6 +189,7 @@ describe('TieredSale Contract', function () {
                 ...defaultTierSettings,
                 tierId: tierId,
                 maxAllocationPerWallet: maxPurchasePerWallet,
+                maxTotalPurchasable: maxTotalPurchasable,
             })).then((tx: { wait: () => any }) => tx.wait())
             await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
                 tierId,
@@ -228,6 +229,7 @@ describe('TieredSale Contract', function () {
             expect(promo.promoCodeOwnerEarnings).to.equal(expectedOwnerEarnings)
             expect(promo.masterOwnerEarnings).to.equal(expectedMasterEarnings)
         })
+
 
         it('should allow withdrawal of referral rewards by the promo code owner', async function () {
             const numPurchase = 3
@@ -461,4 +463,139 @@ describe('TieredSale Contract', function () {
         })
 
     })
+    describe('tiered sale: promo code information retrieval', function () {
+        const promoCodeTier = 'promoTier'
+        const bonusPercentage = 10
+        this.beforeEach(async function () {
+            await tieredSale.connect(operator).setTier(...prepareTierArgs({
+                ...defaultTierSettings,
+                tierId: promoCodeTier,
+                allowPromoCode: true,
+                bonusPercentage: bonusPercentage,
+                price: ethers.utils.parseEther('1'),
+            }))
+        })
+        it('should correctly retrieve promo code information within a valid range', async function () {
+            // Add several promo codes
+            const codes = ['CODE1', 'CODE2', 'CODE3']
+            for (const code of codes) {
+                await tieredSale.connect(operator).addPromoCode(code, 10, referrer.address, operator.address)
+            }
+    
+            // Retrieve and verify promo code information for the first two codes
+            const promoInfo = await tieredSale.allPromoCodeInfo(0, 2)
+            expect(promoInfo.length).to.equal(2)
+            expect(promoInfo[0].promoCodeOwnerAddress).to.equal(referrer.address)
+            expect(promoInfo[1].promoCodeOwnerAddress).to.equal(referrer.address)
+        })
+    
+        it('should revert when trying to retrieve promo code information for invalid range', async function () {
+            // Attempt to retrieve promo code information with invalid range
+            await expect(tieredSale.allPromoCodeInfo(2, 1)).to.be.revertedWith('Invalid range')
+        })
+        it('should correctly handle multiple transactions and reward distributions', async function () {
+            // Configuration percentage
+            const baseOwnerPercentage = 8
+            const masterOwnerPercentage = 2
+            // Define multiple promo codes with different discounts and setup rewards
+            const codes = ['PROMO10', 'PROMO20', 'PROMO30']
+            const discounts = [10, 20, 30]
+            const users = [user, referrer, operator] // Using different users for purchases
+    
+            // Setup promo codes
+            for (let i = 0; i < codes.length; i++) {
+                await tieredSale.connect(deployer).addPromoCode(codes[i], discounts[i], users[i].address, deployer.address)
+                await paymentToken.connect(users[i]).approve(tieredSale.address, ethers.utils.parseEther('100'))
+            }
+    
+            // Execute purchases with each promo code
+            for (let i = 0; i < codes.length; i++) {
+                await tieredSale.connect(users[i]).whitelistedPurchaseInTierWithCode(
+                    promoCodeTier,
+                    10,
+                    [],
+                    codes[i],
+                    100
+                )
+            }
+    
+            // Verify correct reward allocation and token balances after purchases
+            for (let i = 0; i < codes.length; i++) {
+                const promo = await tieredSale.promoCodes(codes[i])
+                const discountedPayment = ethers.utils.parseEther('10').mul(100 - discounts[i]).div(100)
+                const expectedBaseOwnerReward = discountedPayment.mul(baseOwnerPercentage + bonusPercentage).div(100)
+                expect(promo.promoCodeOwnerEarnings).to.equal(expectedBaseOwnerReward)
+                const expectedMasterOwnerReward = discountedPayment.mul(masterOwnerPercentage).div(100)
+                expect(promo.masterOwnerEarnings).to.equal(expectedMasterOwnerReward)
+            }
+        })
+    })
+    describe('tiered sale: referral rewards withdrawal', function () {
+        it('should allow a promo code owner to withdraw their rewards', async function () {
+            const allocationAmount = 200
+            // Setup a promo code and simulate a purchase to generate rewards
+            await tieredSale.connect(operator).setTier(...prepareTierArgs({ 
+                ...defaultTierSettings,
+                allowPromoCode: true,
+                maxAllocationPerWallet: allocationAmount,
+            }))
+            await tieredSale.connect(operator).addPromoCode('REWARD20', 5, referrer.address, operator.address)
+            await paymentToken.connect(user).approve(tieredSale.address, ethers.utils.parseEther(allocationAmount.toString())).then((tx: { wait: () => any }) => tx.wait())
+            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(tierId, 5, [], 'REWARD20', allocationAmount)
+    
+            // Withdraw rewards
+            const initialBalance = await paymentToken.balanceOf(referrer.address)
+            await tieredSale.connect(referrer).withdrawReferenceRewards()
+            const finalBalance = await paymentToken.balanceOf(referrer.address)
+    
+            // Verify that the balance has increased by the expected reward amount
+            expect(finalBalance.sub(initialBalance)).to.be.above(0)
+        })
+    
+        it('should revert if there are no rewards to withdraw', async function () {
+            // Attempt to withdraw with no rewards
+            await expect(tieredSale.connect(user).withdrawReferenceRewards())
+                .to.be.revertedWith('No rewards available')
+        })
+    })
+    describe('tiered sale: sales time', function () {
+        it('should reject purchases when tier is outside the active period', async function () {
+            const currentTime = await getBlockTime()
+            // Set up a tier that starts and ends within a narrow time frame
+            const shortLivedTier = {
+                ...defaultTierSettings,
+                startTime: currentTime + 300, // starts 5 minutes after startTime
+                endTime: currentTime + 600,  // ends 10 minutes after startTime
+            }
+    
+            await tieredSale.connect(operator).setTier(...prepareTierArgs(shortLivedTier))
+            await tieredSale.connect(operator).addPromoCode(promoCode, 5, referrer.address, operator.address)
+    
+            // Attempt to purchase before the tier starts
+            await expect(
+                tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+                    shortLivedTier.tierId,
+                    1,
+                    [],
+                    promoCode,
+                    10
+                )
+            ).to.be.revertedWith('Tier is not active')
+    
+            // Fast forward time to after the end time
+            mineTimeDelta(shortLivedTier.endTime - currentTime + 1)
+    
+            // Attempt to purchase after the tier ends
+            await expect(
+                tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+                    shortLivedTier.tierId,
+                    1,
+                    [],
+                    promoCode,
+                    10
+                )
+            ).to.be.revertedWith('Tier is not active')
+        })
+    })
+    
 })
