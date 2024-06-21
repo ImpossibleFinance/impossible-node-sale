@@ -23,10 +23,26 @@ dotenv.config()
 
 module.exports = {
   solidity: {
-    version: '0.8.9',
-    settings: {
-      optimizer: { enabled: true },
-    },
+    compilers: [
+      {
+        version: '0.8.9',
+        settings: {
+          optimizer: { 
+            enabled: true,
+            runs: 200,
+          },
+        },
+      },
+      {
+        version: '0.8.17',
+        settings: {
+          optimizer: { 
+            enabled: true,
+            runs: 200,
+          },
+        },
+      },
+    ]
   },
   etherscan: {
     apiKey: {
@@ -66,7 +82,7 @@ module.exports = {
     },
     hardhat: {
       forking: {
-        url: 'https://bsc-dataseed.binance.org/',
+        url: 'https://bsc-testnet-rpc.publicnode.com',
         accounts: {
           mnemonic: process.env.MAINNET_MNEMONIC || '',
         },
@@ -81,12 +97,17 @@ module.exports = {
       },
     },
     bsc_test: {
-      url: 'https://data-seed-prebsc-1-s3.binance.org:8545',
+      url: 'https://bsc-testnet-rpc.publicnode.com',
       chainId: 97,
       gasPrice: 11000000000,
-      accounts: {
-        mnemonic: process.env.MAINNET_MNEMONIC || '',
-      },
+      accounts: [
+        process.env.PRIVATE_KEY,
+        process.env.PRIVATE_KEY_TEST_1,
+        process.env.PRIVATE_KEY_TEST_2,
+        process.env.PRIVATE_KEY_TEST_3,
+        process.env.PRIVATE_KEY_TEST_4,
+      ],
+      timeout: 60000,
     },
     bsc_main: {
       url: 'https://bsc-dataseed.binance.org/',

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -191,14 +191,14 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
             require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
         }
 
-        uint discount = calculateDiscount(_promoCode);
-        uint discountedPrice = tiers[_tierId].price * (100 - discount) / 100;  // in gwei
+        uint8 discount = calculateDiscount(_promoCode);
+        uint256 discountedPrice = tiers[_tierId].price * (100 - discount) / 100;  // in gwei
         codePurchaseAmount[_promoCode] += discountedPrice;
         executePurchase(_tierId, _amount, discountedPrice, _promoCode);
     }
 
-    function calculateDiscount(string memory _promoCode) internal view returns (uint) {
-        uint discount;
+    function calculateDiscount(string memory _promoCode) internal view returns (uint8) {
+        uint8 discount;
         if (_isAddressPromoCode(_promoCode)) {
             discount = addressPromoCodePercentage; // Fixed discount for address-based promo codes
         } else {
@@ -256,7 +256,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
             promoCodes[_promoCode].totalPurchased += totalCost;
         }
         // calculate rewards if the promo code discount is not 0
-        else if  (promoCodes[_promoCode].discountPercentage != 0) {
+        else if (promoCodes[_promoCode].discountPercentage != 0) {
             uint256 baseOwnerRewards = totalCost * baseOwnerPercentage / 100;
             uint256 masterOwnerRewards = totalCost * masterOwnerPercentage / 100;
             uint256 bonus = totalCost * tier.bonusPercentage / 100;
@@ -336,7 +336,6 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
 
     function safeCashPaymentToken() public onlyCasherOrOwner {
         // leave the amount for withdrawalReferenceRewards
-        // some rewards might not be valid
         // this function assumes that the rewards are valid
         // to make sure there are enough payment tokens to be withdrawn by the referrers
         uint256 paymentTokenBal = paymentToken.balanceOf(address(this));
