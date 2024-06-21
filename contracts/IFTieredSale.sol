@@ -297,7 +297,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
             if (promo.promoCodeOwnerAddress == promoCodeOwner) {
                 rewards += promo.promoCodeOwnerEarnings;
                 promo.promoCodeOwnerEarnings = 0;
-            } else if (promo.masterOwnerAddress == promoCodeOwner) {
+            }
+            if (promo.masterOwnerAddress == promoCodeOwner) {
                 rewards += promo.masterOwnerEarnings;
                 promo.masterOwnerEarnings = 0;
             }
