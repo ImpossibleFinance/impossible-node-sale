@@ -61,6 +61,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         uint256 promoCodeOwnerEarnings;  // Earnings accrued to the promo code owner, in gwei.
         uint256 masterOwnerEarnings;  // Earnings accrued to the master owner, in gwei.
         uint256 totalPurchased;  // Total value purchased using this promo code, in ether.
+        uint8 baseOwnerPercentageOverride; // Base owner percentage override for this promo code.
+        uint8 masterOwnerPercentageOverride; // Master owner percentage override for this promo code.
     }
 
 
@@ -152,7 +154,9 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         string memory _code,
         uint8 _discountPercentage,
         address _promoCodeOwnerAddress,
-        address _masterOwnerAddress
+        address _masterOwnerAddress,
+        uint8 _baseOwnerPercentageOverride,
+        uint8 _masterOwnerPercentageOverride
     ) public onlyOperator {
         // Validate the discount percentage and owner addresses
         require(_discountPercentage > 0 && _discountPercentage <= 100, "Invalid discount percentage");
@@ -166,7 +170,9 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
             masterOwnerAddress: _masterOwnerAddress,
             promoCodeOwnerEarnings: 0,
             masterOwnerEarnings: 0,
-            totalPurchased: 0
+            totalPurchased: 0,
+            baseOwnerPercentageOverride: _baseOwnerPercentageOverride,
+            masterOwnerPercentageOverride: _masterOwnerPercentageOverride
         });
         ownerPromoCodes[_promoCodeOwnerAddress].push(_code);
         ownerPromoCodes[_masterOwnerAddress].push(_code);
@@ -250,6 +256,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
                 }
                 promoCodes[_promoCode].promoCodeOwnerAddress = promoCodeAddress;
             }
+            uint8 promoCodeReward = promoCodes[_promoCode].baseOwnerPercentageOverride > 0 ? promoCodes[_promoCode].baseOwnerPercentageOverride : addressPromoCodePercentage;
             uint256 ownerRewards = totalCost * addressPromoCodePercentage / 100;
             totalRewardsUnclaimed += ownerRewards;
             promoCodes[_promoCode].promoCodeOwnerEarnings += ownerRewards;
@@ -257,12 +264,16 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         }
         // calculate rewards if the promo code discount is not 0
         else if (promoCodes[_promoCode].discountPercentage != 0) {
-            uint256 baseOwnerRewards = totalCost * baseOwnerPercentage / 100;
-            uint256 masterOwnerRewards = totalCost * masterOwnerPercentage / 100;
+            uint8 rewardPercentage = promoCodes[_promoCode].baseOwnerPercentageOverride > 0 ? promoCodes[_promoCode].baseOwnerPercentageOverride : baseOwnerPercentage;
+            uint256 baseOwnerRewards = totalCost * rewardPercentage / 100;
+
+            uint8 masterRewardPercentage = promoCodes[_promoCode].masterOwnerPercentageOverride > 0 ? promoCodes[_promoCode].masterOwnerPercentageOverride : masterOwnerPercentage;
+            uint256 masterOwnerRewards = totalCost * masterRewardPercentage / 100;
             uint256 bonus = totalCost * tier.bonusPercentage / 100;
 
-            totalRewardsUnclaimed += baseOwnerRewards + masterOwnerRewards + bonus;
-            promoCodes[_promoCode].promoCodeOwnerEarnings += baseOwnerRewards + bonus;
+            baseOwnerRewards += bonus;
+            totalRewardsUnclaimed += baseOwnerRewards + masterOwnerRewards;
+            promoCodes[_promoCode].promoCodeOwnerEarnings += baseOwnerRewards;
             promoCodes[_promoCode].masterOwnerEarnings += masterOwnerRewards;
             promoCodes[_promoCode].totalPurchased += totalCost;
         }
@@ -422,15 +433,6 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         tiers[_tierId].isHalt = _isHalt;
     }
 
-    function updateRewards(uint8 _baseOwnerPercentage, uint8 _masterOwnerPercentage) public onlyOperator {
-        baseOwnerPercentage = _baseOwnerPercentage;
-        masterOwnerPercentage = _masterOwnerPercentage;
-    }
-
-    function updateAddressRewards(uint8 _addressPromoCodePercentage) public onlyOperator {
-        addressPromoCodePercentage = _addressPromoCodePercentage;
-    }
-
     function updatePromoCodeAllowance(string memory _tierId, bool _allowPromoCode) public onlyOperator {
         tiers[_tierId].allowPromoCode = _allowPromoCode;
     }
@@ -447,6 +449,31 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         tiers[_tierId].endTime = _endTime;
     }
 
+    // owner only ops functions
+    function updateRewards(uint8 _baseOwnerPercentage, uint8 _masterOwnerPercentage) public onlyOwner {
+        baseOwnerPercentage = _baseOwnerPercentage;
+        masterOwnerPercentage = _masterOwnerPercentage;
+    }
+
+    function updateAddressRewards(uint8 _addressPromoCodePercentage) public onlyOwner {
+        addressPromoCodePercentage = _addressPromoCodePercentage;
+    }
+
+    function updatePromocode(
+        string memory _code,
+        uint8 _discountPercentage,
+        address _promoCodeOwnerAddress,
+        address _masterOwnerAddress,
+        uint8 _baseOwnerPercentageOverride,
+        uint8 _masterOwnerPercentageOverride
+     ) public onlyOwner {
+        require(promoCodes[_code].promoCodeOwnerAddress != address(0), "Promo code does not exist");
+        promoCodes[_code].discountPercentage = _discountPercentage;
+        promoCodes[_code].promoCodeOwnerAddress = _promoCodeOwnerAddress;
+        promoCodes[_code].masterOwnerAddress = _masterOwnerAddress;
+        promoCodes[_code].baseOwnerPercentageOverride = _baseOwnerPercentageOverride;
+        promoCodes[_code].masterOwnerPercentageOverride = _masterOwnerPercentageOverride;
+    }
 
     // view function for ops
     function allPromoCodeInfo(uint256 fromIdx, uint256 toIdx) public view returns (PromoCode[] memory) {

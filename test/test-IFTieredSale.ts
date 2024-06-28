@@ -597,5 +597,35 @@ describe('TieredSale Contract', function () {
             ).to.be.revertedWith('Tier is not active')
         })
     })
-    
+    describe('tiered sale: reward percentage override', function () {
+        it('should allow overriding the base owner percentage at different tiers', async function () {
+            // baseOwnerPercentage = 8
+            // masterOwnerPercentage = 2
+            const tierId = 'overrideTier'
+            const baseOwnerPercentageOverride = 10
+            const masterOwnerPercentageOverride = 5
+            const promoCode = 'OVERRIDE10'
+            const discount = 10
+            const amount = 1
+            const price = ethers.utils.parseEther('1')
+            const allocationAmount = 100
+            await tieredSale.connect(operator).setTier(...prepareTierArgs({
+                ...defaultTierSettings,
+                tierId: tierId,
+                price: price,
+                maxTotalPurchasable: allocationAmount,
+                maxAllocationPerWallet: allocationAmount,
+            }))
+            await tieredSale.connect(operator).addPromoCode(promoCode, discount, referrer.address, operator.address, baseOwnerPercentageOverride, masterOwnerPercentageOverride)
+            await paymentToken.connect(user).approve(tieredSale.address, ethers.utils.parseEther(allocationAmount.toString()))
+            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(tierId, amount, [], promoCode, allocationAmount)
+            const promo = await tieredSale.promoCodes(promoCode)
+            console.log('allocationAmount', allocationAmount)
+            const discountedPayment = price.mul(100 - discount).div(100).mul(amount)
+            const expectedBaseOwnerReward = discountedPayment.mul(baseOwnerPercentageOverride + defaultTierSettings.bonusPercentage).div(100)
+            expect(promo.promoCodeOwnerEarnings).to.equal(expectedBaseOwnerReward)
+            const expectedMasterOwnerReward = discountedPayment.mul(masterOwnerPercentageOverride).div(100)
+            expect(promo.masterOwnerEarnings).to.equal(expectedMasterOwnerReward)
+        })
+    })
 })
