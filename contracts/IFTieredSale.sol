@@ -34,7 +34,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
     uint8 public addressPromoCodePercentage = 5;
     uint8 public immutable MAX_BASE_OWNER_PERCENTAGE = 10;
     uint8 public immutable MAX_MASTER_OWNER_PERCENTAGE = 2;
-    uint8 public immutable MAX_BONUS_PERCENTAGE = 10;
+    uint8 public immutable MAX_BONUS_PERCENTAGE = 5;
 
     // Reward claiming management
     bool public claimRewardsEnabled = true;
