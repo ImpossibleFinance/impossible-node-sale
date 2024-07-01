@@ -154,7 +154,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
 
 
     // Promotion code management
-    function setPromoCode(
+    function addPromoCode(
         string memory _code,
         uint8 _discountPercentage,
         address _promoCodeOwnerAddress,
@@ -162,6 +162,9 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         uint8 _baseOwnerPercentageOverride,
         uint8 _masterOwnerPercentageOverride
     ) public onlyOperator {
+        if (promoCodes[_code].discountPercentage != 0 || promoCodes[_code].promoCodeOwnerAddress != address(0)){
+            revert("Promo code already exists");
+        }
         // Validate the discount percentage and owner addresses
         _validatePromoCodeSetting(_discountPercentage, _promoCodeOwnerAddress, _masterOwnerAddress, _baseOwnerPercentageOverride, _masterOwnerPercentageOverride);
 
@@ -271,7 +274,6 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
                 }
                 promoCodes[_promoCode].promoCodeOwnerAddress = promoCodeAddress;
             }
-            uint8 promoCodeReward = promoCodes[_promoCode].baseOwnerPercentageOverride > 0 ? promoCodes[_promoCode].baseOwnerPercentageOverride : addressPromoCodePercentage;
             uint256 ownerRewards = totalCost * addressPromoCodePercentage / 100;
             totalRewardsUnclaimed += ownerRewards;
             promoCodes[_promoCode].promoCodeOwnerEarnings += ownerRewards;
@@ -389,12 +391,15 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         return bytes(_promoCode).length == 42;
     }
 
-    function _validatePromoCode(string memory _promoCode) internal pure {
+    function _validatePromoCode(string memory _promoCode) internal view {
         require(bytes(_promoCode).length != 0, "Promo code is empty");
 
         // if the promo code is an address, check if it has purchased a node code
-        // if the promo code is not an address, check if it is added by the admin
-        require((!_isAddressPromoCode(_promoCode) && promoCodes[_promoCode].discountPercentage != 0), "Invalid promo code discount percentage");
+        // if the promo code is not an address, check if it is added by the admin (by checking the discount percentage)
+        if (!_isAddressPromoCode(_promoCode)) {
+            require(promoCodes[_promoCode].discountPercentage != 0, "Invalid promo code discount percentage");
+            return;
+        }
 
         // prceed to check if the address has purchased a node
         address promoCodeAddress;

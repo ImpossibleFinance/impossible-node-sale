@@ -136,12 +136,12 @@ describe('TieredSale Contract', function () {
 
     describe('tiered sale: promo code management', function () {
         it('Should allow adding a promo code', async function () {
-            await expect(tieredSale.connect(operator).addPromoCode('SAVE20', 20, user.getAddress(), operator.getAddress()))
+            await expect(tieredSale.connect(operator).addPromoCode('SAVE20', 20, user.getAddress(), operator.getAddress(), 0, 0))
                 .to.emit(tieredSale, 'PromoCodeAdded')
         })
 
         it('Should fail when adding a promo code with invalid discount', async function () {
-            await expect(tieredSale.connect(operator).addPromoCode('TOOMUCH', 101, user.getAddress(), operator.getAddress()))
+            await expect(tieredSale.connect(operator).addPromoCode('TOOMUCH', 101, user.getAddress(), operator.getAddress(), 0, 0))
                 .to.be.revertedWith('Invalid discount percentage')
         })
     })
@@ -165,7 +165,7 @@ describe('TieredSale Contract', function () {
                 whitelistRootHash: merkleRoot,
             })).then((tx: { wait: () => any }) => tx.wait())
 
-            await tieredSale.connect(operator).addPromoCode(promoCode, discount, referrer.address, operator.address).then((tx: { wait: () => any }) => tx.wait())
+            await tieredSale.connect(operator).addPromoCode(promoCode, discount, referrer.address, operator.address, 0, 0).then((tx: { wait: () => any }) => tx.wait())
 
             await paymentToken.connect(user).approve(tieredSale.address, allocationAmount).then((tx: { wait: () => any }) => tx.wait())
         })
@@ -433,19 +433,20 @@ describe('TieredSale Contract', function () {
             expect(purchasedAmount).to.equal(1)
         })
         it('should accurately calculate and record referral rewards', async function () {
+            const bonusPercentage = 5
             const tierId = 'sale1'
             const purchaseAmount = 3 // 3 ETH
         
             await tieredSale.connect(deployer).setTier(...prepareTierArgs({
                 ...defaultTierSettings,
                 tierId: tierId,
-                bonusPercentage: 10,
+                bonusPercentage: bonusPercentage,
             }))
             const promoCode = 'DEAL10'
             const discount = 10 // 10% discount
         
             // Add a promo code
-            await tieredSale.connect(operator).addPromoCode(promoCode, discount, referrer.address, operator.address)
+            await tieredSale.connect(operator).addPromoCode(promoCode, discount, referrer.address, operator.address, 0, 0)
         
             // Approve token amount
             await paymentToken.connect(user).approve(tieredSale.address, ethers.utils.parseEther('100'))
@@ -456,7 +457,7 @@ describe('TieredSale Contract', function () {
             // Calculate expected earnings
             const discountedPrice = price.mul(100 - discount).div(100).mul( purchaseAmount)
             const baseEarnings = discountedPrice.mul(8).div(100) // 8% base owner earnings
-            const bonusEarnings = discountedPrice.div(10) // 10% bonus
+            const bonusEarnings = discountedPrice.mul(bonusPercentage).div(100) // bonus
         
             const promo = await tieredSale.promoCodes(promoCode)
             expect(promo.promoCodeOwnerEarnings).to.equal(baseEarnings.add(bonusEarnings))
@@ -465,7 +466,7 @@ describe('TieredSale Contract', function () {
     })
     describe('tiered sale: promo code information retrieval', function () {
         const promoCodeTier = 'promoTier'
-        const bonusPercentage = 10
+        const bonusPercentage = 5
         this.beforeEach(async function () {
             await tieredSale.connect(operator).setTier(...prepareTierArgs({
                 ...defaultTierSettings,
@@ -479,7 +480,7 @@ describe('TieredSale Contract', function () {
             // Add several promo codes
             const codes = ['CODE1', 'CODE2', 'CODE3']
             for (const code of codes) {
-                await tieredSale.connect(operator).addPromoCode(code, 10, referrer.address, operator.address)
+                await tieredSale.connect(operator).addPromoCode(code, 10, referrer.address, operator.address, 0, 0)
             }
     
             // Retrieve and verify promo code information for the first two codes
@@ -504,7 +505,7 @@ describe('TieredSale Contract', function () {
     
             // Setup promo codes
             for (let i = 0; i < codes.length; i++) {
-                await tieredSale.connect(deployer).addPromoCode(codes[i], discounts[i], users[i].address, deployer.address)
+                await tieredSale.connect(deployer).addPromoCode(codes[i], discounts[i], users[i].address, deployer.address, 0, 0)
                 await paymentToken.connect(users[i]).approve(tieredSale.address, ethers.utils.parseEther('100'))
             }
     
@@ -539,7 +540,7 @@ describe('TieredSale Contract', function () {
                 allowPromoCode: true,
                 maxAllocationPerWallet: allocationAmount,
             }))
-            await tieredSale.connect(operator).addPromoCode('REWARD20', 5, referrer.address, operator.address)
+            await tieredSale.connect(operator).addPromoCode('REWARD20', 5, referrer.address, operator.address, 0, 0)
             await paymentToken.connect(user).approve(tieredSale.address, ethers.utils.parseEther(allocationAmount.toString())).then((tx: { wait: () => any }) => tx.wait())
             await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(tierId, 5, [], 'REWARD20', allocationAmount)
     
@@ -569,7 +570,7 @@ describe('TieredSale Contract', function () {
             }
     
             await tieredSale.connect(operator).setTier(...prepareTierArgs(shortLivedTier))
-            await tieredSale.connect(operator).addPromoCode(promoCode, 5, referrer.address, operator.address)
+            await tieredSale.connect(operator).addPromoCode(promoCode, 5, referrer.address, operator.address, 0, 0)
     
             // Attempt to purchase before the tier starts
             await expect(
@@ -603,7 +604,7 @@ describe('TieredSale Contract', function () {
             // masterOwnerPercentage = 2
             const tierId = 'overrideTier'
             const baseOwnerPercentageOverride = 10
-            const masterOwnerPercentageOverride = 5
+            const masterOwnerPercentageOverride = 2
             const promoCode = 'OVERRIDE10'
             const discount = 10
             const amount = 1
