@@ -7,10 +7,9 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "./IFFundable.sol";
-import "./IFWhitelistable.sol";
 
 // Contract to manage tiered sales with promotional codes and whitelisting.
-contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelistable {
+contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     using SafeERC20 for ERC20;
 
     ERC20 public paymentToken;
@@ -85,7 +84,6 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         uint256 _endTime
     )
         IFFundable(_paymentToken, _saleToken, _startTime, _endTime, msg.sender)
-        IFWhitelistable()
     {
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _setupRole(OPERATOR_ROLE, msg.sender);
@@ -101,6 +99,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
 
     // Operator management functions
     function addOperator(address operator) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(operator!= address(0), "Invalid address");
         grantRole(OPERATOR_ROLE, operator);
     }
 
@@ -123,9 +122,12 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         uint256 _endTime
     ) public onlyOperator {
         // Validate input data
-        require(_bonusPercentage <= 100, "Invalid bonus percentage");
         require(_price > 0, "Invalid price");
         require(_bonusPercentage <= MAX_BONUS_PERCENTAGE, "Invalid bonus percentage");
+        // check starttime is in the future and endtime is greater than start time
+        require(_startTime > block.timestamp, "Invalid start time");
+        require(_endTime > _startTime, "Invalid end time");
+
 
         tiers[_tierId] = Tier({
             price: _price,
@@ -149,7 +151,6 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
             }
         }
         tierIds.push(_tierId);
-        emit TierUpdated(_tierId);
     }
 
 
@@ -166,7 +167,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
             revert("Promo code already exists");
         }
         // Validate the discount percentage and owner addresses
-        _validatePromoCodeSetting(_discountPercentage, _promoCodeOwnerAddress, _masterOwnerAddress, _baseOwnerPercentageOverride, _masterOwnerPercentageOverride);
+        _validatePromoCodeSetting(_code, _discountPercentage, _promoCodeOwnerAddress, _masterOwnerAddress, _baseOwnerPercentageOverride, _masterOwnerPercentageOverride);
+        require(!_isAddressPromoCode(_code), "Address promo codes are not allowed");
 
         // Add the promo code
         promoCodes[_code] = PromoCode({
@@ -186,12 +188,14 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
     }
 
     function _validatePromoCodeSetting(
+        string memory code,
         uint8 discountPercentage,
         address promoCodeOwnerAddress,
         address masterOwnerAddress,
         uint8 baseOwnerPercentageOverride,
         uint8 masterOwnerPercentageOverride
     ) internal pure {
+        require(bytes(code).length > 0, "Invalid promo code");
         require(discountPercentage > 0 && discountPercentage <= 100, "Invalid discount percentage");
         require(promoCodeOwnerAddress != masterOwnerAddress, "Promo code owner and master owner cannot be the same");
         require(baseOwnerPercentageOverride <= MAX_BASE_OWNER_PERCENTAGE, "Invalid base owner percentage");
@@ -208,7 +212,12 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
     ) public {
         // Ensure promo codes are allowed for the tier and the promo code is valid
         require(tiers[_tierId].allowPromoCode, "Promo code is not allowed for this tier");
-        _validatePromoCode(_promoCode);
+        if (_isAddressPromoCode(_promoCode)) {
+            require(tiers[_tierId].allowWalletPromoCode, "Wallet promo codes are not allowed for this tier");
+        } else {
+            // no need to validate address promo code at purchase
+            _validatePromoCode(_promoCode);
+        }
         bytes32 tierWhitelistRootHash = tiers[_tierId].whitelistRootHash;
         if (tierWhitelistRootHash != bytes32(0)) {
             require(checkTierWhitelist(_tierId, msg.sender, _merkleProof, _allocation), "Invalid proof");
@@ -217,7 +226,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
 
         uint8 discount = calculateDiscount(_promoCode);
         uint256 discountedPrice = tiers[_tierId].price * (100 - discount) / 100;  // in gwei
-        codePurchaseAmount[_promoCode] += discountedPrice;
+        codePurchaseAmount[_promoCode] += discountedPrice * _amount;
         executePurchase(_tierId, _amount, discountedPrice, _promoCode);
     }
 
@@ -270,7 +279,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
             if (promoCodes[_promoCode].promoCodeOwnerAddress == address(0)) {
                 address promoCodeAddress;
                 assembly {
-                    promoCodeAddress := mload(add(_promoCode, 20))
+                    promoCodeAddress := mload(add(_promoCode, 42))
                 }
                 promoCodes[_promoCode].promoCodeOwnerAddress = promoCodeAddress;
             }
@@ -339,9 +348,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
     }
 
 
-    function withdrawPromoCodelRewards (string memory _promoCode) public nonReentrant {
+    function withdrawPromoCodeRewards (string memory _promoCode) public nonReentrant {
         require(claimRewardsEnabled, "Claim rewards is disabled");
-        require(bytes(_promoCode).length > 0, "Invalid promo code");
         _validatePromoCode(_promoCode);
         PromoCode storage promo = promoCodes[_promoCode];
         require(msg.sender == promo.promoCodeOwnerAddress || msg.sender == promo.masterOwnerAddress, "Not promo code owner or master owner");
@@ -460,11 +468,17 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
     }
 
     function updateTierStartTime(string memory _tierId, uint256 _startTime) public onlyOperator {
+        require(_startTime > block.timestamp && _startTime < tiers[_tierId].endTime, "Invalid start time");
         tiers[_tierId].startTime = _startTime;
     }
 
     function updateTierEndTime(string memory _tierId, uint256 _endTime) public onlyOperator {
+        require(_endTime > block.timestamp && tiers[_tierId].startTime < _endTime, "Invalid end time");
         tiers[_tierId].endTime = _endTime;
+    }
+
+    function updateClaimRewardsEnabled(bool _claimRewardsEnabled) public onlyOperator {
+        claimRewardsEnabled = _claimRewardsEnabled;
     }
 
     // owner only ops functions
@@ -488,7 +502,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable, IFWhitelist
         uint8 _baseOwnerPercentageOverride,
         uint8 _masterOwnerPercentageOverride
      ) public onlyOwner {
-        _validatePromoCodeSetting(_discountPercentage, _promoCodeOwnerAddress, _masterOwnerAddress, _baseOwnerPercentageOverride, _masterOwnerPercentageOverride);
+        // ok to update address promo code
+        _validatePromoCodeSetting(_code, _discountPercentage, _promoCodeOwnerAddress, _masterOwnerAddress, _baseOwnerPercentageOverride, _masterOwnerPercentageOverride);
         promoCodes[_code].discountPercentage = _discountPercentage;
         promoCodes[_code].promoCodeOwnerAddress = _promoCodeOwnerAddress;
         promoCodes[_code].masterOwnerAddress = _masterOwnerAddress;
