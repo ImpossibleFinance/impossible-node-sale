@@ -277,10 +277,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         // no need to validate address promo code at purchase
         if (_isAddressPromoCode(_promoCode)) {
             if (promoCodes[_promoCode].promoCodeOwnerAddress == address(0)) {
-                address promoCodeAddress;
-                assembly {
-                    promoCodeAddress := mload(add(_promoCode, 42))
-                }
+                address promoCodeAddress = stringToAddress(_promoCode);
                 promoCodes[_promoCode].promoCodeOwnerAddress = promoCodeAddress;
             }
             uint256 ownerRewards = totalCost * addressPromoCodePercentage / 100;
@@ -410,10 +407,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         }
 
         // prceed to check if the address has purchased a node
-        address promoCodeAddress;
-        assembly {
-            promoCodeAddress := mload(add(_promoCode, 20))
-        }
+        address promoCodeAddress = stringToAddress(_promoCode);
 
         uint256 sum = 0;
         for (uint i = 0; i < tierIds.length; i++) {
@@ -520,5 +514,30 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
             promoCodeInfos[i - fromIdx] = promoCodes[allPromoCodes[i]];
         }
         return promoCodeInfos;
+    }
+
+    // util function
+    function stringToAddress(string memory str) public pure returns (address) {
+        bytes memory b = bytes(str);
+        uint result = 0;
+        uint mul = 1;
+        for (uint i = b.length - 1; i >= 2; i--) {
+            uint c = uint(uint8(b[i]));
+
+            if (c >= 48 && c <= 57) {
+                result += (c - 48) * mul;
+            } else if (c >= 65 && c <= 70) {
+                result += (c - 55) * mul;
+            } else if (c >= 97 && c <= 102) {
+                result += (c - 87) * mul;
+            }
+            
+            mul *= 16;
+
+            if (i == 2) {
+                break; // Stop at position 2 to avoid reading the '0x'
+            }
+        }
+        return address(uint160(result));
     }
 }
