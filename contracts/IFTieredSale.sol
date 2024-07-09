@@ -382,7 +382,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
             _validateWalletPromoCode(msg.sender);
             promoCode = addressToString(msg.sender);
         }
-        PromoCode storage promo = promoCodes[_promoCode];
+        PromoCode storage promo = promoCodes[promoCode];
         require(msg.sender == promo.promoCodeOwnerAddress || msg.sender == promo.masterOwnerAddress, "Not promo code owner or master owner");
 
         uint256 reward = 0;
