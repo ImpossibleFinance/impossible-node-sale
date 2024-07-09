@@ -505,14 +505,15 @@ describe('TieredSale Contract', function () {
             mineTimeDelta(START_TIME_DELTA)
         
             // Purchase with a promo code
-            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(tierId, purchaseAmount, [], promoCode, 10)
-            await tieredSale.connect(referrer).whitelistedPurchaseInTierWithCode(tierId, 1, [], promoCode, 10)
+            await tieredSale.connect(user).whitelistedPurchaseInTierWithWalletCode(tierId, purchaseAmount, [], promoCode, 10)
+            await tieredSale.connect(referrer).whitelistedPurchaseInTierWithWalletCode(tierId, 1, [], promoCode, 10)
+
         
             // Calculate expected earnings
             const discountedPrice = price.mul(purchaseAmount + 1).mul(100 - discount).div(100)
             const earnings = discountedPrice.mul(discount).div(100) // 5% earnings
         
-            const promo = await tieredSale.promoCodes(promoCode)
+            const promo = await tieredSale.promoCodes(promoCode.toLowerCase())
             expect(promo.promoCodeOwnerEarnings).to.equal(earnings)
         })
 
@@ -604,7 +605,7 @@ describe('TieredSale Contract', function () {
     
             // Withdraw rewards
             const initialBalance = await paymentToken.balanceOf(referrer.address)
-            await tieredSale.connect(referrer).withdrawReferenceRewards()
+            await tieredSale.connect(referrer).withdrawAllPromoCodeRewards()
             const finalBalance = await paymentToken.balanceOf(referrer.address)
     
             // Verify that the balance has increased by the expected reward amount
@@ -613,7 +614,7 @@ describe('TieredSale Contract', function () {
     
         it('should revert if there are no rewards to withdraw', async function () {
             // Attempt to withdraw with no rewards
-            await expect(tieredSale.connect(user).withdrawReferenceRewards())
+            await expect(tieredSale.connect(user).withdrawAllPromoCodeRewards())
                 .to.be.revertedWith('No rewards available')
         })
     })
