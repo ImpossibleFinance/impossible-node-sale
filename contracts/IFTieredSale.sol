@@ -349,11 +349,6 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         uint256 rewards = 0;
         for (uint i = 0; i < promoCodesOwned.length; i++) {
             string memory promoCode = promoCodesOwned[i];
-            if (_isWalletPromoCode(promoCode)) {
-                // can only claim wallet promo code of their own address
-                _validateWalletPromoCode(msg.sender);
-                promoCode = addressToString(msg.sender);
-            }
             PromoCode storage promo = promoCodes[promoCodesOwned[i]];
 
             // it could be _masterOwnerAddress or _promoCodeOwnerAddress
