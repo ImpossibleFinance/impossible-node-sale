@@ -237,6 +237,9 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     ) public {
         // Ensure promo codes are allowed for the tier and the promo code is valid
         require(tiers[_tierId].allowWalletPromoCode, "Promo code is not allowed for this tier");
+        require(msg.sender != _walletPromoCode, "Cannot purchase with own wallet address promo code");
+        // the promo code wallet address has to purchase at least one node
+        _validateWalletPromoCode(_walletPromoCode);
         string memory promoCode = addressToString(_walletPromoCode);
         // no need to validate address promo code at purchase
         bytes32 tierWhitelistRootHash = tiers[_tierId].whitelistRootHash;
@@ -348,7 +351,6 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         string[] memory promoCodesOwned = ownerPromoCodes[promoCodeOwner];
         uint256 rewards = 0;
         for (uint i = 0; i < promoCodesOwned.length; i++) {
-            string memory promoCode = promoCodesOwned[i];
             PromoCode storage promo = promoCodes[promoCodesOwned[i]];
 
             // it could be _masterOwnerAddress or _promoCodeOwnerAddress
@@ -439,7 +441,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
                 break;
             }
         }
-        require(sum > 0, "Address has not purchased a node");
+        require(sum > 0, "Promo code address has not purchased a node");
     }
 
     function _validatePromoCode(string memory _promoCode) internal view {

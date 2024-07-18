@@ -505,12 +505,15 @@ describe('TieredSale Contract', function () {
             mineTimeDelta(START_TIME_DELTA)
         
             // Purchase with a promo code
+            await expect(tieredSale.connect(user).whitelistedPurchaseInTierWithWalletCode(tierId, purchaseAmount, [], promoCode, 10)).to.be.revertedWith('Promo code address has not purchased a node')
+            await expect(tieredSale.connect(referrer).whitelistedPurchaseInTierWithWalletCode(tierId, 1, [], promoCode, 10)).to.be.revertedWith('Cannot purchase with own wallet address promo code')
+            await tieredSale.connect(referrer).whitelistedPurchaseInTier(tierId, 1, [], 10)
+            mineNext()
             await tieredSale.connect(user).whitelistedPurchaseInTierWithWalletCode(tierId, purchaseAmount, [], promoCode, 10)
-            await tieredSale.connect(referrer).whitelistedPurchaseInTierWithWalletCode(tierId, 1, [], promoCode, 10)
 
         
             // Calculate expected earnings
-            const discountedPrice = price.mul(purchaseAmount + 1).mul(100 - discount).div(100)
+            const discountedPrice = price.mul(purchaseAmount).mul(100 - discount).div(100)
             const earnings = discountedPrice.mul(discount).div(100) // 5% earnings
         
             const promo = await tieredSale.promoCodes(promoCode.toLowerCase())
