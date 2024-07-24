@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.9;
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.9;
 
 import '@openzeppelin/contracts/token/ERC20/ERC20.sol';
 import '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
@@ -221,6 +221,19 @@ abstract contract IFFundable is Ownable, ReentrancyGuard {
 
         // Emit an event for this cashing
         emit Cash(_msgSender(), amount, 0);
+    }
+
+    function cashAllPaymentToken() external onlyCasherOrOwner {
+        // Get amount of payment token received
+        uint256 paymentTokenBal = paymentToken.balanceOf(address(this));
+
+        // not to revert if there's no payment token to facilitate operation
+
+        // Transfer payment tokens to the caller
+        paymentToken.safeTransfer(_msgSender(), paymentTokenBal);
+
+        // Emit an event for this cashing
+        emit Cash(_msgSender(), paymentTokenBal, 0);
     }
 
 

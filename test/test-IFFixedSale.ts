@@ -2,13 +2,16 @@ import '@nomiclabs/hardhat-ethers'
 import { SignerWithAddress } from '@nomiclabs/hardhat-ethers/signers'
 import { expect } from 'chai'
 import { ethers } from 'hardhat'
+import hre from 'hardhat'
 import { computeMerkleProof, computeMerkleRoot, getAddressIndex } from './merkleWhitelist'
 import IFSaleGeneralTest, { _ctx, _ctxFree, _ctxSale } from './IFSaleGeneralTest'
 import { getBlockTime, mineNext, mineTimeDelta } from './helpers'
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { EXCEED_MAX_PAYMENT, NO_TOKEN_TO_BE_WITHDRAWN, NOT_A_GIVEAWAY, NOT_WHITELIST_SETTER_OR_OWNER, USE_VESTED_WITHDRAW_GIVEAWAY } from './reverts/msg-IFSale'
+import IFFixedSale from '../artifacts/contracts/IFFixedSale.sol/IFFixedSale.json'
+import ERC20 from '../artifacts/contracts/GenericToken.sol/GenericToken.json'
 
-function computeMerkleRootWithAllocation(signers: SignerWithAddress[], allocations: number[]): [string[], Map<string, string>]{
+export function computeMerkleRootWithAllocation(signers: SignerWithAddress[], allocations: number[]): [string[], Map<string, string>]{
     const leaves: string[] = []
     const addressValMap = new Map()
     signers.forEach((s: SignerWithAddress, i: number) => {
@@ -34,10 +37,47 @@ export default describe('IF Fixed Sale', function () {
   const ctxFree: any = _ctxFree
   const ctxSale: any = _ctxSale
 
+  if (process.env.TEST_STAKE_TOKEN) {
+    ctx.StakeToken = new hre.ethers.Contract(
+      process.env.TEST_STAKE_TOKEN,
+      ERC20.abi
+    )
+  }
+  if (process.env.TEST_PAYMENT_TOKEN) {
+    ctx.PaymentToken = new hre.ethers.Contract(
+      process.env.TEST_PAYMENT_TOKEN,
+      ERC20.abi
+    )
+  }
+  if (process.env.TEST_SALE_TOKEN) {
+    ctx.SaleToken = new hre.ethers.Contract(
+      process.env.TEST_SALE_TOKEN,
+      ERC20.abi
+    )
+  }
+  if (process.env.TEST_IFFIXEDSALE) {
+    ctx.IFFixedSale = new hre.ethers.Contract(
+      process.env.TEST_IFFIXEDSALE,
+      IFFixedSale.abi
+    )
+  }
+  if (process.env.TEST_IFFIXEDSALE) {
+    ctx.IFFixedSale = new hre.ethers.Contract(
+      process.env.TEST_IFFIXEDSALE,
+      IFFixedSale.abi
+    )
+  }
+  if (process.env.TEST_IFFIXEDSALE_2) {
+    ctxSale.IFFixedSale = new hre.ethers.Contract(
+      process.env.TEST_IFFIXEDSALE_2,
+      IFFixedSale.abi
+    )
+  }
+
   const contractName = 'MockIFFixedSale'
 
   const generalTest = IFSaleGeneralTest
-  generalTest(this, contractName, ctx, _ctxFree, _ctxSale)
+  generalTest(this, contractName, ctx, ctxFree, ctxSale, Boolean(process.env.SKIP_SETUP) || false)
 
 
   generalTest.prototype.it = it('can save allocation amount in merkle tree', async function () {

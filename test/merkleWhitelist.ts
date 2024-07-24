@@ -22,6 +22,12 @@ export const getAddressIndex = (addresses: string[], address: string) => {
   return index
 }
 
+export const computeMerkleProofByAddress = (addresses: string[], addressValMap:  Map<string, string>, address: string) => {
+  const packed = addressValMap.get(address.toLowerCase()) || ''
+  const tempAcctIdx = getAddressIndex(addresses, packed)
+  return computeMerkleProof(addresses, tempAcctIdx)
+}
+
 // compute a merkle proof given a list of addresses and an index within that list
 export const computeMerkleProof = (addresses: string[], index: number) => {
   // get leaves from addresses
