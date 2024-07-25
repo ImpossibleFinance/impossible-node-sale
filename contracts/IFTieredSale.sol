@@ -532,15 +532,48 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     }
 
     // view function for ops
-    function allPromoCodeInfo(uint256 fromIdx, uint256 toIdx) public view returns (PromoCode[] memory) {
+    function getAllPromoCodeInfo(uint256 fromIdx, uint256 toIdx) public view returns (PromoCode[] memory) {
         require(fromIdx < toIdx, "Invalid range");
-        require(toIdx <= allPromoCodes.length, "Invalid range");
+        if (toIdx > allPromoCodes.length) {
+            toIdx = allPromoCodes.length;
+        }
         PromoCode[] memory promoCodeInfos = new PromoCode[](toIdx - fromIdx);
         for (uint i = fromIdx; i < toIdx; i++) {
             promoCodeInfos[i - fromIdx] = promoCodes[allPromoCodes[i]];
         }
         return promoCodeInfos;
     }
+
+    function getPromoCodeLength() public view returns (uint256) {
+        return allPromoCodes.length;
+    }
+
+    function getAllPromoCodes(uint256 fromIdx, uint256 toIdx) public view returns (string[] memory) {
+        require(fromIdx < toIdx, "Invalid range");
+        if (toIdx > allPromoCodes.length) {
+            toIdx = allPromoCodes.length;
+        }
+        string[] memory promoCodeList = new string[](toIdx - fromIdx);
+        for (uint i = fromIdx; i < toIdx; i++) {
+            promoCodeList[i] = allPromoCodes[i];
+        }
+        return promoCodeList;
+    }
+
+    function getOwnerPromoCodes(address owner) public view returns (string[] memory) {
+        uint256 length = ownerPromoCodes[owner].length;
+        string[] memory promoCodeList = new string[](length);
+        for (uint i = 0; i < length; i++) {
+            promoCodeList[i] = ownerPromoCodes[owner][i];
+        }
+        return promoCodeList;
+    }
+
+
+    function getAllTierIds() public view returns (string[] memory) {
+        return tierIds;
+    }
+
 
     // util function
     function addressToString(address _addr) public pure returns (string memory) {
