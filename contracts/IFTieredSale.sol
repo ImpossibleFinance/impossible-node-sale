@@ -36,7 +36,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     uint8 public immutable MAX_BONUS_PERCENTAGE = 5;
 
     // Reward claiming management
-    bool public claimRewardsEnabled = true;
+    bool public claimRewardsEnabled = false;
     uint256 public totalRewardsUnclaimed; // Total unclaimed rewards, assuming all are valid
 
     // Role constants
