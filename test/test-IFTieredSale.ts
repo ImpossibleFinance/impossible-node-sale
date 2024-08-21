@@ -137,6 +137,21 @@ describe('TieredSale Contract', function () {
             expect(tier.price).to.equal(ethers.utils.parseEther('1'))
             expect(tier.maxTotalPurchasable).to.equal(1000)
         })
+        it('should be able to retrieve tiere info', async function () {
+            const tierId = 'tier1'
+            await tieredSale.connect(deployer).setTier(...await prepareTierArgs({
+                    ...defaultTierSettings,
+                    tierId: tierId,
+                })).then((tx: { wait: () => any }) => tx.wait())
+            const tierId2 = 'tier2'
+            await tieredSale.connect(deployer).setTier(...await prepareTierArgs({
+                    ...defaultTierSettings,
+                    tierId: tierId2,
+                })).then((tx: { wait: () => any }) => tx.wait())
+            mineNext()
+            const tierIds = await tieredSale.getAllTierIds()
+            expect(tierIds.length).to.equal(2)
+        })
     })
 
     describe('tiered sale: promo code management', function () {
@@ -541,10 +556,19 @@ describe('TieredSale Contract', function () {
             }
     
             // Retrieve and verify promo code information for the first two codes
-            const promoInfo = await tieredSale.allPromoCodeInfo(0, 2)
-            expect(promoInfo.length).to.equal(2)
+            const promoInfo = await tieredSale.getAllPromoCodeInfo(0, 1000)
+            expect(promoInfo.length).to.equal(3)
             expect(promoInfo[0].promoCodeOwnerAddress).to.equal(referrer.address)
             expect(promoInfo[1].promoCodeOwnerAddress).to.equal(referrer.address)
+
+            // test the getOwnerPromoCodes function
+            const ownerPromoCodes = await tieredSale.getOwnerPromoCodes(referrer.address)
+            const allPromoCodes = await tieredSale.getAllPromoCodes(0, 1000)
+            expect(ownerPromoCodes.length).to.equal(3)
+            expect(ownerPromoCodes[0]).to.equal(codes[0])
+            expect(allPromoCodes.length).to.equal(3)
+            expect(allPromoCodes[0]).to.equal(codes[0])
+            // expect(ownerPromoCodes[0].discountPercentage).to.equal(codes[10])
         })
     
         it('should revert when trying to retrieve promo code information for invalid range', async function () {
