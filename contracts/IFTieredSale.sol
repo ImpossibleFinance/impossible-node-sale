@@ -492,6 +492,10 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         tiers[_tierId].startTime = _startTime;
     }
 
+    function updateMaxAllocationPerWallet(string memory _tierId, uint256 _maxAllocationPerWallet) public onlyOperator {
+        tiers[_tierId].maxAllocationPerWallet = _maxAllocationPerWallet;
+    }
+
     function updateTierEndTime(string memory _tierId, uint256 _endTime) public onlyOperator {
         require(_endTime > block.timestamp && tiers[_tierId].startTime < _endTime, "Invalid end time");
         tiers[_tierId].endTime = _endTime;
