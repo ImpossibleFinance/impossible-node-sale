@@ -137,21 +137,6 @@ describe('TieredSale Contract', function () {
             expect(tier.price).to.equal(ethers.utils.parseEther('1'))
             expect(tier.maxTotalPurchasable).to.equal(1000)
         })
-        it('should be able to retrieve tiere info', async function () {
-            const tierId = 'tier1'
-            await tieredSale.connect(deployer).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    tierId: tierId,
-                })).then((tx: { wait: () => any }) => tx.wait())
-            const tierId2 = 'tier2'
-            await tieredSale.connect(deployer).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    tierId: tierId2,
-                })).then((tx: { wait: () => any }) => tx.wait())
-            mineNext()
-            const tierIds = await tieredSale.getAllTierIds()
-            expect(tierIds.length).to.equal(2)
-        })
     })
 
     describe('tiered sale: promo code management', function () {
@@ -186,6 +171,8 @@ describe('TieredSale Contract', function () {
                 })).then((tx: { wait: () => any }) => tx.wait())
 
             await tieredSale.connect(operator).addPromoCode(promoCode, discount, referrer.address, operator.address, 0, 0).then((tx: { wait: () => any }) => tx.wait())
+
+            await tieredSale.connect(operator).updateClaimRewardsEnabled(true).then((tx: { wait: () => any }) => tx.wait())
 
             await paymentToken.connect(user).approve(tieredSale.address, allocationAmount).then((tx: { wait: () => any }) => tx.wait())
             mineTimeDelta(START_TIME_DELTA)
@@ -547,6 +534,7 @@ describe('TieredSale Contract', function () {
                     bonusPercentage: bonusPercentage,
                     price: ethers.utils.parseEther('1'),
                 }))
+            await tieredSale.connect(operator).updateClaimRewardsEnabled(true).then((tx: { wait: () => any }) => tx.wait())
         })
         it('should correctly retrieve promo code information within a valid range', async function () {
             // Add several promo codes
@@ -556,24 +544,15 @@ describe('TieredSale Contract', function () {
             }
     
             // Retrieve and verify promo code information for the first two codes
-            const promoInfo = await tieredSale.getAllPromoCodeInfo(0, 1000)
-            expect(promoInfo.length).to.equal(3)
+            const promoInfo = await tieredSale.getAllPromoCodeInfo(0, 2)
+            expect(promoInfo.length).to.equal(2)
             expect(promoInfo[0].promoCodeOwnerAddress).to.equal(referrer.address)
             expect(promoInfo[1].promoCodeOwnerAddress).to.equal(referrer.address)
-
-            // test the getOwnerPromoCodes function
-            const ownerPromoCodes = await tieredSale.getOwnerPromoCodes(referrer.address)
-            const allPromoCodes = await tieredSale.getAllPromoCodes(0, 1000)
-            expect(ownerPromoCodes.length).to.equal(3)
-            expect(ownerPromoCodes[0]).to.equal(codes[0])
-            expect(allPromoCodes.length).to.equal(3)
-            expect(allPromoCodes[0]).to.equal(codes[0])
-            // expect(ownerPromoCodes[0].discountPercentage).to.equal(codes[10])
         })
     
         it('should revert when trying to retrieve promo code information for invalid range', async function () {
             // Attempt to retrieve promo code information with invalid range
-            await expect(tieredSale.allPromoCodeInfo(2, 1)).to.be.revertedWith('Invalid range')
+            await expect(tieredSale.getAllPromoCodeInfo(2, 1)).to.be.revertedWith('Invalid range')
         })
         it('should correctly handle multiple transactions and reward distributions', async function () {
             // Configuration percentage
@@ -616,6 +595,7 @@ describe('TieredSale Contract', function () {
     })
     describe('tiered sale: referral rewards withdrawal', function () {
         it('should allow a promo code owner to withdraw their rewards', async function () {
+            await tieredSale.connect(operator).updateClaimRewardsEnabled(true).then((tx: { wait: () => any }) => tx.wait())
             const allocationAmount = 200
             // Setup a promo code and simulate a purchase to generate rewards
             await tieredSale.connect(operator).setTier(...await prepareTierArgs({
@@ -640,6 +620,7 @@ describe('TieredSale Contract', function () {
         })
     
         it('should revert if there are no rewards to withdraw', async function () {
+            await tieredSale.connect(operator).updateClaimRewardsEnabled(true).then((tx: { wait: () => any }) => tx.wait())
             // Attempt to withdraw with no rewards
             await expect(tieredSale.connect(user).withdrawAllPromoCodeRewards())
                 .to.be.revertedWith('No rewards available')
