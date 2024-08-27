@@ -196,7 +196,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         uint8 masterOwnerPercentageOverride
     ) internal pure {
         require(bytes(code).length > 0, "Invalid promo code");
-        require(discountPercentage > 0 && discountPercentage <= 100, "Invalid discount percentage");
+        require(discountPercentage <= 100, "Invalid discount percentage");
         require(promoCodeOwnerAddress != masterOwnerAddress, "Promo code owner and master owner cannot be the same");
         require(baseOwnerPercentageOverride <= MAX_BASE_OWNER_PERCENTAGE, "Invalid base owner percentage");
         require(masterOwnerPercentageOverride <= MAX_MASTER_OWNER_PERCENTAGE, "Invalid master owner percentage");
