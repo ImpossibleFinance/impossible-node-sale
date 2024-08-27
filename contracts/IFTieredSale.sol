@@ -28,12 +28,15 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     string[] public allPromoCodes;
 
     // Configuration percentages
+    // reward percentage
     uint8 public baseOwnerPercentage = 8;
     uint8 public masterOwnerPercentage = 2;
-    uint8 public addressPromoCodePercentage = 5;
+    uint8 public addressPromoCodePercentage = 8;
     uint8 public immutable MAX_BASE_OWNER_PERCENTAGE = 10;
     uint8 public immutable MAX_MASTER_OWNER_PERCENTAGE = 2;
     uint8 public immutable MAX_BONUS_PERCENTAGE = 5;
+    // discount percentage
+    uint8 public addressPromoCodeDiscountPercentage = 5;
 
     // Reward claiming management
     bool public claimRewardsEnabled = false;
@@ -196,7 +199,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         uint8 masterOwnerPercentageOverride
     ) internal pure {
         require(bytes(code).length > 0, "Invalid promo code");
-        require(discountPercentage > 0 && discountPercentage <= 100, "Invalid discount percentage");
+        require(discountPercentage <= 100, "Invalid discount percentage");
         require(promoCodeOwnerAddress != masterOwnerAddress, "Promo code owner and master owner cannot be the same");
         require(baseOwnerPercentageOverride <= MAX_BASE_OWNER_PERCENTAGE, "Invalid base owner percentage");
         require(masterOwnerPercentageOverride <= MAX_MASTER_OWNER_PERCENTAGE, "Invalid master owner percentage");
@@ -259,7 +262,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     function calculateDiscount(string memory _promoCode) internal view returns (uint8) {
         uint8 discount;
         if (_isWalletPromoCode(_promoCode)) {
-            discount = addressPromoCodePercentage; // Fixed discount for address-based promo codes
+            discount = addressPromoCodeDiscountPercentage; // Fixed discount for address-based promo codes
         } else {
             discount = promoCodes[_promoCode].discountPercentage; // Variable discount for other promo codes
         }
@@ -516,6 +519,11 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     function updateAddressRewards(uint8 _addressPromoCodePercentage) public onlyOwner {
         require(_addressPromoCodePercentage <= MAX_BASE_OWNER_PERCENTAGE, "Invalid address promo code percentage");
         addressPromoCodePercentage = _addressPromoCodePercentage;
+    }
+
+    function updateAddressDiscount(uint8 _addressPromoCodeDiscountPercentage) public onlyOwner {
+        require(_addressPromoCodeDiscountPercentage <= 100, "Invalid address promo code discount percentage");
+        addressPromoCodeDiscountPercentage = _addressPromoCodeDiscountPercentage;
     }
 
     function updatePromocode(
