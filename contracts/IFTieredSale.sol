@@ -28,15 +28,18 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     string[] public allPromoCodes;
 
     // Configuration percentages
+    // reward percentage
     uint8 public baseOwnerPercentage = 8;
     uint8 public masterOwnerPercentage = 2;
-    uint8 public addressPromoCodePercentage = 5;
+    uint8 public addressPromoCodePercentage = 8;
     uint8 public immutable MAX_BASE_OWNER_PERCENTAGE = 10;
     uint8 public immutable MAX_MASTER_OWNER_PERCENTAGE = 2;
     uint8 public immutable MAX_BONUS_PERCENTAGE = 5;
+    // discount percentage
+    uint8 public addressPromoCodeDiscountPercentage = 5;
 
     // Reward claiming management
-    bool public claimRewardsEnabled = true;
+    bool public claimRewardsEnabled = false;
     uint256 public totalRewardsUnclaimed; // Total unclaimed rewards, assuming all are valid
 
     // Role constants
@@ -95,6 +98,14 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     modifier onlyOperator() {
         require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender) || hasRole(OPERATOR_ROLE, msg.sender),  "Not authorized");
         _;
+    }
+
+        // Override the transferOwnership function
+    function transferOwnership(address newOwner) public override onlyOwner {
+        require(newOwner != address(0), "New owner is the zero address");
+        _revokeRole(DEFAULT_ADMIN_ROLE, owner());
+        _grantRole(DEFAULT_ADMIN_ROLE, newOwner);
+        super.transferOwnership(newOwner);
     }
 
     // Operator management functions
@@ -196,7 +207,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         uint8 masterOwnerPercentageOverride
     ) internal pure {
         require(bytes(code).length > 0, "Invalid promo code");
-        require(discountPercentage > 0 && discountPercentage <= 100, "Invalid discount percentage");
+        require(discountPercentage <= 100, "Invalid discount percentage");
         require(promoCodeOwnerAddress != masterOwnerAddress, "Promo code owner and master owner cannot be the same");
         require(baseOwnerPercentageOverride <= MAX_BASE_OWNER_PERCENTAGE, "Invalid base owner percentage");
         require(masterOwnerPercentageOverride <= MAX_MASTER_OWNER_PERCENTAGE, "Invalid master owner percentage");
@@ -239,7 +250,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         require(tiers[_tierId].allowWalletPromoCode, "Promo code is not allowed for this tier");
         require(msg.sender != _walletPromoCode, "Cannot purchase with own wallet address promo code");
         // the promo code wallet address has to purchase at least one node
-        _validateWalletPromoCode(_walletPromoCode);
+        require(validateWalletPromoCode(_walletPromoCode), "Promo code address has not purchased a node");
         string memory promoCode = addressToString(_walletPromoCode);
         // no need to validate address promo code at purchase
         bytes32 tierWhitelistRootHash = tiers[_tierId].whitelistRootHash;
@@ -259,7 +270,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     function calculateDiscount(string memory _promoCode) internal view returns (uint8) {
         uint8 discount;
         if (_isWalletPromoCode(_promoCode)) {
-            discount = addressPromoCodePercentage; // Fixed discount for address-based promo codes
+            discount = addressPromoCodeDiscountPercentage; // Fixed discount for address-based promo codes
         } else {
             discount = promoCodes[_promoCode].discountPercentage; // Variable discount for other promo codes
         }
@@ -376,7 +387,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         string memory promoCode = _promoCode;
         if (_isWalletPromoCode(promoCode)) {
             // can only claim wallet promo code of their own address
-            _validateWalletPromoCode(msg.sender);
+            require(validateWalletPromoCode(msg.sender), "Promo code address has not purchased a node");
             promoCode = addressToString(msg.sender);
         }
         PromoCode storage promo = promoCodes[promoCode];
@@ -427,8 +438,10 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         return bytes(_promoCode).length == 42;
     }
 
-    function _validateWalletPromoCode(address promoCodeAddress) internal view {
-        require(promoCodeAddress != address(0), "Invalid promo code");
+    function validateWalletPromoCode(address promoCodeAddress) public view returns (bool) {
+        if (promoCodeAddress == address(0)) {
+            return false;
+        }
 
         uint256 sum = 0;
         for (uint i = 0; i < tierIds.length; i++) {
@@ -438,10 +451,10 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
             if (purchasedAmountPerTier[tierIds[i]][promoCodeAddress] > 0) {
                 // return true if the address has purchased at least one node
                 sum += purchasedAmountPerTier[tierIds[i]][promoCodeAddress];
-                break;
+                return true;
             }
         }
-        require(sum > 0, "Promo code address has not purchased a node");
+        return false;
     }
 
     function _validatePromoCode(string memory _promoCode) internal view {
@@ -492,6 +505,10 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         tiers[_tierId].startTime = _startTime;
     }
 
+    function updateMaxAllocationPerWallet(string memory _tierId, uint256 _maxAllocationPerWallet) public onlyOperator {
+        tiers[_tierId].maxAllocationPerWallet = _maxAllocationPerWallet;
+    }
+
     function updateTierEndTime(string memory _tierId, uint256 _endTime) public onlyOperator {
         require(_endTime > block.timestamp && tiers[_tierId].startTime < _endTime, "Invalid end time");
         tiers[_tierId].endTime = _endTime;
@@ -514,6 +531,11 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         addressPromoCodePercentage = _addressPromoCodePercentage;
     }
 
+    function updateAddressDiscount(uint8 _addressPromoCodeDiscountPercentage) public onlyOwner {
+        require(_addressPromoCodeDiscountPercentage <= 100, "Invalid address promo code discount percentage");
+        addressPromoCodeDiscountPercentage = _addressPromoCodeDiscountPercentage;
+    }
+
     function updatePromocode(
         string memory _code,
         uint8 _discountPercentage,
@@ -532,15 +554,48 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     }
 
     // view function for ops
-    function allPromoCodeInfo(uint256 fromIdx, uint256 toIdx) public view returns (PromoCode[] memory) {
+    function getAllPromoCodeInfo(uint256 fromIdx, uint256 toIdx) public view returns (PromoCode[] memory) {
         require(fromIdx < toIdx, "Invalid range");
-        require(toIdx <= allPromoCodes.length, "Invalid range");
+        if (toIdx > allPromoCodes.length) {
+            toIdx = allPromoCodes.length;
+        }
         PromoCode[] memory promoCodeInfos = new PromoCode[](toIdx - fromIdx);
         for (uint i = fromIdx; i < toIdx; i++) {
             promoCodeInfos[i - fromIdx] = promoCodes[allPromoCodes[i]];
         }
         return promoCodeInfos;
     }
+
+    function getPromoCodeLength() public view returns (uint256) {
+        return allPromoCodes.length;
+    }
+
+    function getAllPromoCodes(uint256 fromIdx, uint256 toIdx) public view returns (string[] memory) {
+        require(fromIdx < toIdx, "Invalid range");
+        if (toIdx > allPromoCodes.length) {
+            toIdx = allPromoCodes.length;
+        }
+        string[] memory promoCodeList = new string[](toIdx - fromIdx);
+        for (uint i = fromIdx; i < toIdx; i++) {
+            promoCodeList[i] = allPromoCodes[i];
+        }
+        return promoCodeList;
+    }
+
+    function getOwnerPromoCodes(address owner) public view returns (string[] memory) {
+        uint256 length = ownerPromoCodes[owner].length;
+        string[] memory promoCodeList = new string[](length);
+        for (uint i = 0; i < length; i++) {
+            promoCodeList[i] = ownerPromoCodes[owner][i];
+        }
+        return promoCodeList;
+    }
+
+
+    function getAllTierIds() public view returns (string[] memory) {
+        return tierIds;
+    }
+
 
     // util function
     function addressToString(address _addr) public pure returns (string memory) {

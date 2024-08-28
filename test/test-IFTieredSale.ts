@@ -121,6 +121,34 @@ describe('TieredSale Contract', function () {
             await expect(tieredSale.connect(user).setTier(...await prepareTierArgs(defaultTierSettings)))
                 .to.be.revertedWith('Not authorized')
         })
+        it('should transfer ownership and DEFAULT_ADMIN_ROLE correctly', async function () {
+            // Check initial state
+            expect(await tieredSale.owner()).to.equal(deployer.address)
+            expect(await tieredSale.hasRole(await tieredSale.DEFAULT_ADMIN_ROLE(), deployer.address)).to.be.true
+            expect(await tieredSale.hasRole(await tieredSale.DEFAULT_ADMIN_ROLE(), user.address)).to.be.false
+        
+            // Transfer ownership
+            await tieredSale.transferOwnership(user.address)
+
+            mineNext()
+        
+            // Check final state
+            expect(await tieredSale.owner()).to.equal(user.address)
+            expect(await tieredSale.hasRole(await tieredSale.DEFAULT_ADMIN_ROLE(), deployer.address)).to.be.false
+            expect(await tieredSale.hasRole(await tieredSale.DEFAULT_ADMIN_ROLE(), user.address)).to.be.true
+        
+            // Attempt to call an onlyOwner function with old owner (should fail)
+            await expect(tieredSale.connect(deployer).updateRewards(5, 1)).to.be.revertedWith('Ownable: caller is not the owner')
+        
+            // Call an onlyOwner function with new owner (should succeed)
+            await expect(tieredSale.connect(user).updateRewards(5, 1)).to.not.be.reverted
+        
+            // Attempt to call an onlyRole(DEFAULT_ADMIN_ROLE) function with old owner (should fail)
+            await expect(tieredSale.connect(deployer).addOperator(referrer.address)).to.be.reverted
+        
+            // Call an onlyRole(DEFAULT_ADMIN_ROLE) function with new owner (should succeed)
+            await expect(tieredSale.connect(user).addOperator(referrer.address)).to.not.be.reverted
+          })
     })
 
     describe('tiered sale: tier management', function () {
@@ -171,6 +199,8 @@ describe('TieredSale Contract', function () {
                 })).then((tx: { wait: () => any }) => tx.wait())
 
             await tieredSale.connect(operator).addPromoCode(promoCode, discount, referrer.address, operator.address, 0, 0).then((tx: { wait: () => any }) => tx.wait())
+
+            await tieredSale.connect(operator).updateClaimRewardsEnabled(true).then((tx: { wait: () => any }) => tx.wait())
 
             await paymentToken.connect(user).approve(tieredSale.address, allocationAmount).then((tx: { wait: () => any }) => tx.wait())
             mineTimeDelta(START_TIME_DELTA)
@@ -496,7 +526,8 @@ describe('TieredSale Contract', function () {
                     bonusPercentage: bonusPercentage,
                 }))
             const promoCode = referrer.address
-            const discount = 5 // 5% discount for address promo code
+            const discount = await tieredSale.connect(user).addressPromoCodeDiscountPercentage() // discount for address promo code
+            const referralBonus = await tieredSale.connect(user).addressPromoCodePercentage() // referral bonus for address promo code
         
             // Approve token amount
             await paymentToken.connect(user).approve(tieredSale.address, ethers.utils.parseEther('100'))
@@ -514,7 +545,7 @@ describe('TieredSale Contract', function () {
         
             // Calculate expected earnings
             const discountedPrice = price.mul(purchaseAmount).mul(100 - discount).div(100)
-            const earnings = discountedPrice.mul(discount).div(100) // 5% earnings
+            const earnings = discountedPrice.mul(referralBonus).div(100)
         
             const promo = await tieredSale.promoCodes(promoCode.toLowerCase())
             expect(promo.promoCodeOwnerEarnings).to.equal(earnings)
@@ -532,6 +563,7 @@ describe('TieredSale Contract', function () {
                     bonusPercentage: bonusPercentage,
                     price: ethers.utils.parseEther('1'),
                 }))
+            await tieredSale.connect(operator).updateClaimRewardsEnabled(true).then((tx: { wait: () => any }) => tx.wait())
         })
         it('should correctly retrieve promo code information within a valid range', async function () {
             // Add several promo codes
@@ -541,7 +573,7 @@ describe('TieredSale Contract', function () {
             }
     
             // Retrieve and verify promo code information for the first two codes
-            const promoInfo = await tieredSale.allPromoCodeInfo(0, 2)
+            const promoInfo = await tieredSale.getAllPromoCodeInfo(0, 2)
             expect(promoInfo.length).to.equal(2)
             expect(promoInfo[0].promoCodeOwnerAddress).to.equal(referrer.address)
             expect(promoInfo[1].promoCodeOwnerAddress).to.equal(referrer.address)
@@ -549,7 +581,7 @@ describe('TieredSale Contract', function () {
     
         it('should revert when trying to retrieve promo code information for invalid range', async function () {
             // Attempt to retrieve promo code information with invalid range
-            await expect(tieredSale.allPromoCodeInfo(2, 1)).to.be.revertedWith('Invalid range')
+            await expect(tieredSale.getAllPromoCodeInfo(2, 1)).to.be.revertedWith('Invalid range')
         })
         it('should correctly handle multiple transactions and reward distributions', async function () {
             // Configuration percentage
@@ -592,6 +624,7 @@ describe('TieredSale Contract', function () {
     })
     describe('tiered sale: referral rewards withdrawal', function () {
         it('should allow a promo code owner to withdraw their rewards', async function () {
+            await tieredSale.connect(operator).updateClaimRewardsEnabled(true).then((tx: { wait: () => any }) => tx.wait())
             const allocationAmount = 200
             // Setup a promo code and simulate a purchase to generate rewards
             await tieredSale.connect(operator).setTier(...await prepareTierArgs({
@@ -616,6 +649,7 @@ describe('TieredSale Contract', function () {
         })
     
         it('should revert if there are no rewards to withdraw', async function () {
+            await tieredSale.connect(operator).updateClaimRewardsEnabled(true).then((tx: { wait: () => any }) => tx.wait())
             // Attempt to withdraw with no rewards
             await expect(tieredSale.connect(user).withdrawAllPromoCodeRewards())
                 .to.be.revertedWith('No rewards available')
