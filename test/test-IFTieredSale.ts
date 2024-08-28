@@ -121,6 +121,34 @@ describe('TieredSale Contract', function () {
             await expect(tieredSale.connect(user).setTier(...await prepareTierArgs(defaultTierSettings)))
                 .to.be.revertedWith('Not authorized')
         })
+        it('should transfer ownership and DEFAULT_ADMIN_ROLE correctly', async function () {
+            // Check initial state
+            expect(await tieredSale.owner()).to.equal(deployer.address)
+            expect(await tieredSale.hasRole(await tieredSale.DEFAULT_ADMIN_ROLE(), deployer.address)).to.be.true
+            expect(await tieredSale.hasRole(await tieredSale.DEFAULT_ADMIN_ROLE(), user.address)).to.be.false
+        
+            // Transfer ownership
+            await tieredSale.transferOwnership(user.address)
+
+            mineNext()
+        
+            // Check final state
+            expect(await tieredSale.owner()).to.equal(user.address)
+            expect(await tieredSale.hasRole(await tieredSale.DEFAULT_ADMIN_ROLE(), deployer.address)).to.be.false
+            expect(await tieredSale.hasRole(await tieredSale.DEFAULT_ADMIN_ROLE(), user.address)).to.be.true
+        
+            // Attempt to call an onlyOwner function with old owner (should fail)
+            await expect(tieredSale.connect(deployer).updateRewards(5, 1)).to.be.revertedWith('Ownable: caller is not the owner')
+        
+            // Call an onlyOwner function with new owner (should succeed)
+            await expect(tieredSale.connect(user).updateRewards(5, 1)).to.not.be.reverted
+        
+            // Attempt to call an onlyRole(DEFAULT_ADMIN_ROLE) function with old owner (should fail)
+            await expect(tieredSale.connect(deployer).addOperator(referrer.address)).to.be.reverted
+        
+            // Call an onlyRole(DEFAULT_ADMIN_ROLE) function with new owner (should succeed)
+            await expect(tieredSale.connect(user).addOperator(referrer.address)).to.not.be.reverted
+          })
     })
 
     describe('tiered sale: tier management', function () {

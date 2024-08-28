@@ -100,6 +100,14 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         _;
     }
 
+        // Override the transferOwnership function
+    function transferOwnership(address newOwner) public override onlyOwner {
+        require(newOwner != address(0), "New owner is the zero address");
+        _revokeRole(DEFAULT_ADMIN_ROLE, owner());
+        _grantRole(DEFAULT_ADMIN_ROLE, newOwner);
+        super.transferOwnership(newOwner);
+    }
+
     // Operator management functions
     function addOperator(address operator) public onlyRole(DEFAULT_ADMIN_ROLE) {
         require(operator!= address(0), "Invalid address");
