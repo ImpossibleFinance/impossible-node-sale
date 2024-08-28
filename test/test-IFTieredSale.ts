@@ -526,7 +526,8 @@ describe('TieredSale Contract', function () {
                     bonusPercentage: bonusPercentage,
                 }))
             const promoCode = referrer.address
-            const discount = 5 // 5% discount for address promo code
+            const discount = await tieredSale.connect(user).addressPromoCodeDiscountPercentage() // discount for address promo code
+            const referralBonus = await tieredSale.connect(user).addressPromoCodePercentage() // referral bonus for address promo code
         
             // Approve token amount
             await paymentToken.connect(user).approve(tieredSale.address, ethers.utils.parseEther('100'))
@@ -544,7 +545,7 @@ describe('TieredSale Contract', function () {
         
             // Calculate expected earnings
             const discountedPrice = price.mul(purchaseAmount).mul(100 - discount).div(100)
-            const earnings = discountedPrice.mul(discount).div(100) // 5% earnings
+            const earnings = discountedPrice.mul(referralBonus).div(100)
         
             const promo = await tieredSale.promoCodes(promoCode.toLowerCase())
             expect(promo.promoCodeOwnerEarnings).to.equal(earnings)

@@ -250,7 +250,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         require(tiers[_tierId].allowWalletPromoCode, "Promo code is not allowed for this tier");
         require(msg.sender != _walletPromoCode, "Cannot purchase with own wallet address promo code");
         // the promo code wallet address has to purchase at least one node
-        _validateWalletPromoCode(_walletPromoCode);
+        require(validateWalletPromoCode(_walletPromoCode), "Promo code address has not purchased a node");
         string memory promoCode = addressToString(_walletPromoCode);
         // no need to validate address promo code at purchase
         bytes32 tierWhitelistRootHash = tiers[_tierId].whitelistRootHash;
@@ -387,7 +387,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         string memory promoCode = _promoCode;
         if (_isWalletPromoCode(promoCode)) {
             // can only claim wallet promo code of their own address
-            _validateWalletPromoCode(msg.sender);
+            require(validateWalletPromoCode(msg.sender), "Promo code address has not purchased a node");
             promoCode = addressToString(msg.sender);
         }
         PromoCode storage promo = promoCodes[promoCode];
@@ -438,8 +438,10 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         return bytes(_promoCode).length == 42;
     }
 
-    function _validateWalletPromoCode(address promoCodeAddress) internal view {
-        require(promoCodeAddress != address(0), "Invalid promo code");
+    function validateWalletPromoCode(address promoCodeAddress) public view returns (bool) {
+        if (promoCodeAddress == address(0)) {
+            return false;
+        }
 
         uint256 sum = 0;
         for (uint i = 0; i < tierIds.length; i++) {
@@ -449,10 +451,10 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
             if (purchasedAmountPerTier[tierIds[i]][promoCodeAddress] > 0) {
                 // return true if the address has purchased at least one node
                 sum += purchasedAmountPerTier[tierIds[i]][promoCodeAddress];
-                break;
+                return true;
             }
         }
-        require(sum > 0, "Promo code address has not purchased a node");
+        return false;
     }
 
     function _validatePromoCode(string memory _promoCode) internal view {
