@@ -553,10 +553,10 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
 
     // view function for ops
     function getAllPromoCodeInfo(uint256 fromIdx, uint256 toIdx) public view returns (PromoCode[] memory) {
-        require(fromIdx < toIdx, "Invalid range");
         if (toIdx > allPromoCodes.length) {
             toIdx = allPromoCodes.length;
         }
+        require(fromIdx < toIdx, "Invalid range");
         PromoCode[] memory promoCodeInfos = new PromoCode[](toIdx - fromIdx);
         for (uint i = fromIdx; i < toIdx; i++) {
             promoCodeInfos[i - fromIdx] = promoCodes[allPromoCodes[i]];
@@ -569,10 +569,10 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     }
 
     function getAllPromoCodes(uint256 fromIdx, uint256 toIdx) public view returns (string[] memory) {
-        require(fromIdx < toIdx, "Invalid range");
         if (toIdx > allPromoCodes.length) {
             toIdx = allPromoCodes.length;
         }
+        require(fromIdx < toIdx, "Invalid range");
         string[] memory promoCodeList = new string[](toIdx - fromIdx);
         for (uint i = fromIdx; i < toIdx; i++) {
             promoCodeList[i] = allPromoCodes[i];
