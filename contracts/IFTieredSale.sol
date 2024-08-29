@@ -443,14 +443,12 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
             return false;
         }
 
-        uint256 sum = 0;
         for (uint i = 0; i < tierIds.length; i++) {
             if (tiers[tierIds[i]].price == 0) {
                 continue;
             }
             if (purchasedAmountPerTier[tierIds[i]][promoCodeAddress] > 0) {
                 // return true if the address has purchased at least one node
-                sum += purchasedAmountPerTier[tierIds[i]][promoCodeAddress];
                 return true;
             }
         }
