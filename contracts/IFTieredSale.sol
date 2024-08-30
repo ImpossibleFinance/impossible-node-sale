@@ -208,6 +208,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     ) internal pure {
         require(bytes(code).length > 0, "Invalid promo code");
         require(discountPercentage <= 100, "Invalid discount percentage");
+        require(promoCodeOwnerAddress != address(0), "Invalid promo code owner address");
         require(promoCodeOwnerAddress != masterOwnerAddress, "Promo code owner and master owner cannot be the same");
         require(baseOwnerPercentageOverride <= MAX_BASE_OWNER_PERCENTAGE, "Invalid base owner percentage");
         require(masterOwnerPercentageOverride <= MAX_MASTER_OWNER_PERCENTAGE, "Invalid master owner percentage");
@@ -457,7 +458,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
 
     function _validatePromoCode(string memory _promoCode) internal view {
         require(bytes(_promoCode).length > 0, "Invalid promo code");
-        require(promoCodes[_promoCode].discountPercentage > 0, "Invalid promo code");
+        require(promoCodes[_promoCode].promoCodeOwnerAddress != address(0), "Invalid promo code");
     }
 
     // Override the renounceOwnership function to disable it
