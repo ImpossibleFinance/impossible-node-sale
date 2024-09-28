@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "./IFFundable.sol";
 
 // Contract to manage tiered sales with promotional codes and whitelisting.
@@ -15,7 +16,6 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     ERC20 public paymentToken;
 
     ERC20 public saleToken;
-
 
     // Tier and promotion management
     string[] public tierIds;
@@ -90,6 +90,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     {
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _setupRole(OPERATOR_ROLE, msg.sender);
+        backendSigner = msg.sender;
         paymentToken = _paymentToken;
         saleToken = _saleToken;
     }
@@ -288,6 +289,26 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
             require(checkTierWhitelist(_tierId, msg.sender, _merkleProof, _allocation), "Invalid proof");
             require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
         }
+        executePurchase(_tierId, _amount, tiers[_tierId].price, "");
+    }
+
+    function signedPurchaseInTier(
+        string memory _tierId,
+        uint256 _amount,
+        uint256 _allocation,
+        bytes calldata signature
+    ) public {
+        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, _tierId, _allocation));
+
+        bytes32 message = ECDSA.toEthSignedMessageHash(messageHash);
+
+        address signer = ECDSA.recover(message, signature);
+
+        // the message has to be signed by operator
+        require(hasRole(OPERATOR_ROLE, signer), "Invalid signature");
+
+        require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
+
         executePurchase(_tierId, _amount, tiers[_tierId].price, "");
     }
 
