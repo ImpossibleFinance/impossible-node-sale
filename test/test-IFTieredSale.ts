@@ -19,6 +19,7 @@ type TierSettings = {
     allowWalletPromoCode: boolean;
     startTime: number;
     endTime: number;
+    requireSignature: boolean;
 };
 
 
@@ -39,6 +40,7 @@ async function prepareTierArgs(tierSettings: TierSettings) {
         tierSettings.allowWalletPromoCode,
         startTime,
         startTime + 100000,
+        tierSettings.requireSignature,
     ]
 }
 
@@ -68,6 +70,7 @@ describe('TieredSale Contract', function () {
         allowWalletPromoCode: true,
         startTime: 0,
         endTime: 2**31 - 1, // max of unix timestamp
+        requireSignature: false,
     }
 
     const operatorRole = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('OPERATOR_ROLE'))
@@ -733,6 +736,7 @@ describe('TieredSale Contract', function () {
         this.beforeEach(async function () {
             await tieredSale.connect(operator).setTier(...await prepareTierArgs({
                     ...defaultTierSettings,
+                    requireSignature: true,
                 })).then((tx: { wait: () => any }) => tx.wait())
 
             await paymentToken.connect(user).approve(tieredSale.address, price.mul(maxPurchasePerWallet)).then((tx: { wait: () => any }) => tx.wait())
