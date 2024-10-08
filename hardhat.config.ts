@@ -87,6 +87,7 @@ module.exports = {
           mnemonic: process.env.MAINNET_MNEMONIC || '',
         },
       },
+      allowUnlimitedContractSize: true,
     },
     arbitrumOne: {
       url: 'https://arb1.arbitrum.io/rpc',

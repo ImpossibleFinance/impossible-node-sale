@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.17;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "./IFFundable.sol";
 
 // Contract to manage tiered sales with promotional codes and whitelisting.
@@ -15,7 +15,6 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     ERC20 public paymentToken;
 
     ERC20 public saleToken;
-
 
     // Tier and promotion management
     string[] public tierIds;
@@ -57,6 +56,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         bool allowWalletPromoCode;  // Flag to allow promo codes specific to wallets.
         uint256 startTime;  // Start time for this tier.
         uint256 endTime;  // End time for this tier.
+        bool requireSignature;  // Require signature for public sale or not
     }
 
     struct PromoCode {
@@ -130,7 +130,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         bool _allowPromoCode,
         bool _allowWalletPromoCode,
         uint256 _startTime,
-        uint256 _endTime
+        uint256 _endTime,
+        bool requireSignature
     ) public onlyOperator {
         // Validate input data
         require(_price > 0, "Invalid price");
@@ -150,7 +151,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
             allowPromoCode: _allowPromoCode,
             allowWalletPromoCode: _allowWalletPromoCode,
             startTime: _startTime,
-            endTime: _endTime
+            endTime: _endTime,
+            requireSignature: requireSignature
 
         });
         emit TierUpdated(_tierId);
@@ -257,6 +259,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         if (tierWhitelistRootHash != bytes32(0)) {
             require(checkTierWhitelist(_tierId, msg.sender, _merkleProof, _allocation), "Invalid proof");
             require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
+        } else {
+            require(!tiers[_tierId].requireSignature, "Use signedPurchaseInTier");
         }
 
         uint8 discount = calculateDiscount(promoCode);
@@ -287,7 +291,30 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         if (tierWhitelistRootHash != bytes32(0)) {
             require(checkTierWhitelist(_tierId, msg.sender, _merkleProof, _allocation), "Invalid proof");
             require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
+        } else {
+            require(!tiers[_tierId].requireSignature, "Use signedPurchaseInTier");
         }
+        executePurchase(_tierId, _amount, tiers[_tierId].price, "");
+    }
+
+    function signedPurchaseInTier(
+        string memory _tierId,
+        uint256 _amount,
+        uint256 _allocation,
+        bytes calldata signature
+    ) public {
+        require(tiers[_tierId].requireSignature, "Use whitelistedPurchaseInTier");
+        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, _tierId, _allocation));
+
+        bytes32 message = ECDSA.toEthSignedMessageHash(messageHash);
+
+        address signer = ECDSA.recover(message, signature);
+
+        // the message has to be signed by operator
+        require(hasRole(OPERATOR_ROLE, signer), "Invalid signature");
+
+        require(getTotalPurchasedAmount(msg.sender) + _amount <= _allocation, "Purchase exceeds allocation");
+
         executePurchase(_tierId, _amount, tiers[_tierId].price, "");
     }
 
@@ -594,6 +621,20 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
 
     function getAllTierIds() public view returns (string[] memory) {
         return tierIds;
+    }
+
+    function getTotalPurchasedAmount(address _addr) public view returns (uint256) {
+        uint256 sum = 0;
+        for (uint i = 0; i < tierIds.length; i++) {
+            if (tiers[tierIds[i]].price == 0) {
+                continue;
+            }
+            if (purchasedAmountPerTier[tierIds[i]][_addr] > 0) {
+                // return true if the address has purchased at least one node
+                sum += purchasedAmountPerTier[tierIds[i]][_addr];
+            }
+        }
+        return sum;
     }
 
 
