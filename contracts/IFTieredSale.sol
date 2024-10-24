@@ -318,6 +318,58 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         executePurchase(_tierId, _amount, tiers[_tierId].price, "");
     }
 
+    function signedPurchaseInTierWithCode(
+        string memory _tierId,
+        uint256 _amount,
+        uint256 _allocation,
+        bytes calldata signature,
+        string memory _promoCode,
+        address _walletPromoCode
+    ) public nonReentrant {
+        require(tiers[_tierId].requireSignature, "Use whitelistedPurchaseInTier");
+        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, _tierId, _allocation));
+
+        bytes32 message = ECDSA.toEthSignedMessageHash(messageHash);
+
+        address signer = ECDSA.recover(message, signature);
+
+        // the message has to be signed by operator
+        require(hasRole(OPERATOR_ROLE, signer), "Invalid signature");
+
+        require(getTotalPurchasedAmount(msg.sender) + _amount <= _allocation, "Purchase exceeds allocation");
+
+        require((bytes(_promoCode).length == 0 || _walletPromoCode == address(0)), "No more than one promo code");
+        bool isRegularPromoCode = true;
+        string memory promoCode;
+        if (bytes(_promoCode).length == 0) {
+            _validatePromoCode(_promoCode);
+            promoCode = addressToString(_walletPromoCode);
+            isRegularPromoCode = true;
+        }
+        if (_walletPromoCode != address(0)) {
+            require(validateWalletPromoCode(_walletPromoCode), "Promo code address has not purchased a node");
+            promoCode = addressToString(_walletPromoCode);
+            isRegularPromoCode = false;
+        }
+
+
+        uint256 tierPrice = tiers[_tierId].price;
+
+        if (bytes(promoCode).length == 0) {
+            uint8 discount = calculateDiscount(promoCode);
+            uint256 discountedPrice = tierPrice * (100 - discount) / 100;  // in gwei
+            executePurchase(_tierId, _amount, discountedPrice, promoCode);
+            if (isRegularPromoCode) {
+                _updatePromoCodeRewards(_promoCode, discountedPrice * _amount, _tierId);
+            } else {
+                _updateWalletPromoCodeRewards(_walletPromoCode, discountedPrice * _amount);
+            }
+        } else {
+            executePurchase(_tierId, _amount, tierPrice, "");
+        }
+    }
+
+
     function executePurchase (string memory _tierId, uint256 _amount, uint256 _price, string memory _promoCode) private nonReentrant  {
         Tier storage tier = tiers[_tierId];
         require(!tier.isHalt, "Purchases in this tier are currently halted");
