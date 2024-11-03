@@ -3,13 +3,12 @@ pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "./IFFundable.sol";
 
 // Contract to manage tiered sales with promotional codes and whitelisting.
-contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
+contract IFTieredSale is IFFundable, AccessControl {
     using SafeERC20 for ERC20;
 
     ERC20 public paymentToken;
@@ -74,9 +73,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     // State variables
 
     // Events
-    event TierUpdated(string tierId);
     event PurchasedInTier(address indexed buyer, string tierId, uint256 amount, string promoCode);
-    event ReferralRewardWithdrawn(address referrer, uint256 amount);
     event PromoCodeAdded(string code, uint8 discountPercentage, address promoCodeOwnerAddress, address masterOwnerAddress);
 
     // Constructor
@@ -95,14 +92,13 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     }
 
     // Access management
-    modifier onlyOperator() {
-        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender) || hasRole(OPERATOR_ROLE, msg.sender),  "Not authorized");
-        _;
+    function _checkOperator() internal view {
+        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender) || hasRole(OPERATOR_ROLE, msg.sender), "Not authorized");
     }
 
-        // Override the transferOwnership function
+    // Override the transferOwnership function
     function transferOwnership(address newOwner) public override onlyOwner {
-        require(newOwner != address(0), "New owner is the zero address");
+        require(newOwner != address(0), "Zero address");
         _revokeRole(DEFAULT_ADMIN_ROLE, owner());
         _grantRole(DEFAULT_ADMIN_ROLE, newOwner);
         super.transferOwnership(newOwner);
@@ -132,7 +128,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         uint256 _startTime,
         uint256 _endTime,
         bool requireSignature
-    ) public onlyOperator {
+    ) public {
+        _checkOperator();
         // Validate input data
         require(_price > 0, "Invalid price");
         require(_bonusPercentage <= MAX_BONUS_PERCENTAGE, "Invalid bonus percentage");
@@ -155,7 +152,6 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
             requireSignature: requireSignature
 
         });
-        emit TierUpdated(_tierId);
 
         // iterate through the tierIds array to check if the tierId already exists
         for (uint i = 0; i < tierIds.length; i++) {
@@ -175,7 +171,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         address _masterOwnerAddress,
         uint8 _baseOwnerPercentageOverride,
         uint8 _masterOwnerPercentageOverride
-    ) public onlyOperator {
+    ) public {
+        _checkOperator();
         if (promoCodes[_code].discountPercentage != 0 || promoCodes[_code].promoCodeOwnerAddress != address(0)){
             revert("Promo code already exists");
         }
@@ -210,7 +207,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     ) internal pure {
         require(bytes(code).length > 0, "Invalid promo code");
         require(discountPercentage <= 100, "Invalid discount percentage");
-        require(promoCodeOwnerAddress != masterOwnerAddress, "Promo code owner and master owner cannot be the same");
+        require(promoCodeOwnerAddress != masterOwnerAddress, "Same owner and master");
         require(baseOwnerPercentageOverride <= MAX_BASE_OWNER_PERCENTAGE, "Invalid base owner percentage");
         require(masterOwnerPercentageOverride <= MAX_MASTER_OWNER_PERCENTAGE, "Invalid master owner percentage");
     }
@@ -225,12 +222,14 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     ) public {
         // Ensure promo codes are allowed for the tier and the promo code is valid
         require(!_isWalletPromoCode(_promoCode), "Purchase with whitelistedPurchaseInTierWithWalletCode");
-        require(tiers[_tierId].allowPromoCode, "Promo code is not allowed for this tier");
+        require(tiers[_tierId].allowPromoCode, "Promo code is not allowed");
         _validatePromoCode(_promoCode);
         bytes32 tierWhitelistRootHash = tiers[_tierId].whitelistRootHash;
         if (tierWhitelistRootHash != bytes32(0)) {
             require(checkTierWhitelist(_tierId, msg.sender, _merkleProof, _allocation), "Invalid proof");
             require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
+        } else {
+            require(!tiers[_tierId].requireSignature, "Use signed purchase");
         }
 
         uint8 discount = calculateDiscount(_promoCode);
@@ -249,10 +248,10 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         uint256 _allocation
     ) public {
         // Ensure promo codes are allowed for the tier and the promo code is valid
-        require(tiers[_tierId].allowWalletPromoCode, "Promo code is not allowed for this tier");
+        require(tiers[_tierId].allowWalletPromoCode, "Promo code is not allowed");
         require(msg.sender != _walletPromoCode, "Cannot purchase with own wallet address promo code");
         // the promo code wallet address has to purchase at least one node
-        require(validateWalletPromoCode(_walletPromoCode), "Promo code address has not purchased a node");
+        require(validateWalletPromoCode(_walletPromoCode), "Unactivated wallet code");
         string memory promoCode = addressToString(_walletPromoCode);
         // no need to validate address promo code at purchase
         bytes32 tierWhitelistRootHash = tiers[_tierId].whitelistRootHash;
@@ -260,7 +259,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
             require(checkTierWhitelist(_tierId, msg.sender, _merkleProof, _allocation), "Invalid proof");
             require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
         } else {
-            require(!tiers[_tierId].requireSignature, "Use signedPurchaseInTier");
+            require(!tiers[_tierId].requireSignature, "Use signed purchase");
         }
 
         uint8 discount = calculateDiscount(promoCode);
@@ -292,29 +291,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
             require(checkTierWhitelist(_tierId, msg.sender, _merkleProof, _allocation), "Invalid proof");
             require(purchasedAmountPerTier[_tierId][msg.sender] + _amount <= _allocation, "Purchase exceeds allocation");
         } else {
-            require(!tiers[_tierId].requireSignature, "Use signedPurchaseInTier");
+            require(!tiers[_tierId].requireSignature, "Use signed purchase");
         }
-        executePurchase(_tierId, _amount, tiers[_tierId].price, "");
-    }
-
-    function signedPurchaseInTier(
-        string memory _tierId,
-        uint256 _amount,
-        uint256 _allocation,
-        bytes calldata signature
-    ) public {
-        require(tiers[_tierId].requireSignature, "Use whitelistedPurchaseInTier");
-        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, _tierId, _allocation));
-
-        bytes32 message = ECDSA.toEthSignedMessageHash(messageHash);
-
-        address signer = ECDSA.recover(message, signature);
-
-        // the message has to be signed by operator
-        require(hasRole(OPERATOR_ROLE, signer), "Invalid signature");
-
-        require(getTotalPurchasedAmount(msg.sender) + _amount <= _allocation, "Purchase exceeds allocation");
-
         executePurchase(_tierId, _amount, tiers[_tierId].price, "");
     }
 
@@ -325,8 +303,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         bytes calldata signature,
         string memory _promoCode,
         address _walletPromoCode
-    ) public nonReentrant {
-        require(tiers[_tierId].requireSignature, "Use whitelistedPurchaseInTier");
+    ) public {
+        require(tiers[_tierId].requireSignature, "Use whitelisted purchase");
         bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, _tierId, _allocation));
 
         bytes32 message = ECDSA.toEthSignedMessageHash(messageHash);
@@ -338,50 +316,46 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
 
         require(getTotalPurchasedAmount(msg.sender) + _amount <= _allocation, "Purchase exceeds allocation");
 
-        require((bytes(_promoCode).length == 0 || _walletPromoCode == address(0)), "No more than one promo code");
+        require((bytes(_promoCode).length == 0 || _walletPromoCode == address(0)), "One promo code only");
         bool isRegularPromoCode = true;
         string memory promoCode;
-        if (bytes(_promoCode).length == 0) {
+        if (bytes(_promoCode).length != 0) {
             _validatePromoCode(_promoCode);
             promoCode = addressToString(_walletPromoCode);
-            isRegularPromoCode = true;
         }
         if (_walletPromoCode != address(0)) {
-            require(validateWalletPromoCode(_walletPromoCode), "Promo code address has not purchased a node");
+            require(validateWalletPromoCode(_walletPromoCode), "Unactivated wallet code");
             promoCode = addressToString(_walletPromoCode);
             isRegularPromoCode = false;
         }
 
-
-        uint256 tierPrice = tiers[_tierId].price;
+        uint256 price = tiers[_tierId].price;
 
         if (bytes(promoCode).length == 0) {
             uint8 discount = calculateDiscount(promoCode);
-            uint256 discountedPrice = tierPrice * (100 - discount) / 100;  // in gwei
-            executePurchase(_tierId, _amount, discountedPrice, promoCode);
+            price = price * (100 - discount) / 100;  // in gwei
             if (isRegularPromoCode) {
-                _updatePromoCodeRewards(_promoCode, discountedPrice * _amount, _tierId);
+                _updatePromoCodeRewards(_promoCode, price * _amount, _tierId);
             } else {
-                _updateWalletPromoCodeRewards(_walletPromoCode, discountedPrice * _amount);
+                _updateWalletPromoCodeRewards(_walletPromoCode, price * _amount);
             }
-        } else {
-            executePurchase(_tierId, _amount, tierPrice, "");
         }
+        executePurchase(_tierId, _amount, price, promoCode);
     }
 
 
     function executePurchase (string memory _tierId, uint256 _amount, uint256 _price, string memory _promoCode) private nonReentrant  {
         Tier storage tier = tiers[_tierId];
-        require(!tier.isHalt, "Purchases in this tier are currently halted");
+        require(!tier.isHalt, "Tier is halted");
         require(tier.startTime <= block.timestamp && block.timestamp <= tier.endTime, "Tier is not active");
-        require(_amount > 0, "Can only purchase non-zero amounts");
+        require(_amount > 0, "Amount is 0");
         require(
             tier.maxAllocationPerWallet == 0 || purchasedAmountPerTier[_tierId][msg.sender] + _amount <= tier.maxAllocationPerWallet,
-            "Amount exceeds wallet's maximum allocation for this tier"
+            "Exceed wallet allocation"
         );
         require(
             tier.maxTotalPurchasable == 0 || saleTokenPurchasedByTier[_tierId] + _amount <= tier.maxTotalPurchasable,
-            "Amount exceeds tier's maximum total purchasable"
+            "Exceed tier's total purchasable"
         );
 
         totalPaymentReceived += _amount * _price;
@@ -435,7 +409,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
 
     function withdrawAllPromoCodeRewards () public nonReentrant {
         address promoCodeOwner = msg.sender;
-        require(claimRewardsEnabled, "Claim rewards is disabled");
+        require(claimRewardsEnabled, "Claiming disabled");
 
         // for each promo code owned by the address, withdraw the rewards
         string[] memory promoCodesOwned = ownerPromoCodes[promoCodeOwner];
@@ -453,24 +427,22 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
                 promo.masterOwnerEarnings = 0;
             }
         }
-        require(rewards > 0, "No rewards available");
+        require(rewards > 0, "No reward");
         totalRewardsUnclaimed -= rewards;
         paymentToken.safeTransfer(msg.sender, rewards);
-
-        emit ReferralRewardWithdrawn(msg.sender, rewards);
     }
 
 
     function withdrawPromoCodeRewards (string memory _promoCode) public nonReentrant {
-        require(claimRewardsEnabled, "Claim rewards is disabled");
+        require(claimRewardsEnabled, "Claiming disabled");
         string memory promoCode = _promoCode;
         if (_isWalletPromoCode(promoCode)) {
             // can only claim wallet promo code of their own address
-            require(validateWalletPromoCode(msg.sender), "Promo code address has not purchased a node");
+            require(validateWalletPromoCode(msg.sender), "Unactivated wallet code");
             promoCode = addressToString(msg.sender);
         }
         PromoCode storage promo = promoCodes[promoCode];
-        require(msg.sender == promo.promoCodeOwnerAddress || msg.sender == promo.masterOwnerAddress, "Not promo code owner or master owner");
+        require(msg.sender == promo.promoCodeOwnerAddress || msg.sender == promo.masterOwnerAddress, "Not code owner");
 
         uint256 reward = 0;
         if (msg.sender == promo.promoCodeOwnerAddress) {
@@ -481,11 +453,9 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
             promo.masterOwnerEarnings = 0;
         }
 
-        require(reward > 0, "No rewards available");
+        require(reward > 0, "No reward");
         totalRewardsUnclaimed -= reward;
         paymentToken.safeTransfer(msg.sender, reward);
-
-        emit ReferralRewardWithdrawn(msg.sender, reward);
     }
 
     function safeCashPaymentToken() public onlyCasherOrOwner {
@@ -493,8 +463,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         // this function assumes that the rewards are valid
         // to make sure there are enough payment tokens to be withdrawn by the referrers
         uint256 paymentTokenBal = paymentToken.balanceOf(address(this));
-        require(paymentTokenBal > 0, "No payment token to cash");
-        require(paymentTokenBal > totalRewardsUnclaimed, "Not enough payment token to cash");
+        require(paymentTokenBal > totalRewardsUnclaimed, "Not enough payment token");
         uint256 withdrawAmount = paymentTokenBal - totalRewardsUnclaimed;
         paymentToken.safeTransfer(_msgSender(), withdrawAmount);
         emit Cash(_msgSender(), withdrawAmount, 0);
@@ -543,74 +512,39 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
 
     // Override the renounceOwnership function to disable it
     function renounceOwnership() public pure override{
-        revert("ownership renunciation is disabled");
+        revert("disabled");
     }
 
     // ops functions
-    function haltAllTiers() public onlyOperator {
-        for (uint i = 0; i < tierIds.length; i++) {
-            tiers[tierIds[i]].isHalt = true;
-        }
-    }
-
-    function unhaltAllTiers() public onlyOperator {
-        for (uint i = 0; i < tierIds.length; i++) {
-            tiers[tierIds[i]].isHalt = false;
-        }
-    }
-
-    function updateMaxTotalPurchasable(string memory _tierId, uint256 _maxTotalPurchasable) public onlyOperator {
-        tiers[_tierId].maxTotalPurchasable = _maxTotalPurchasable;
-    }
-
-    function updateWhitelist(string memory _tierId, bytes32 _whitelistRootHash) public onlyOperator {
+    function updateWhitelist(string memory _tierId, bytes32 _whitelistRootHash) external {
+        _checkOperator();
         tiers[_tierId].whitelistRootHash = _whitelistRootHash;
     }
 
-    function updateIsHalt(string memory _tierId, bool _isHalt) public onlyOperator {
+    function updateIsHalt(string memory _tierId, bool _isHalt) external {
+        _checkOperator();
         tiers[_tierId].isHalt = _isHalt;
     }
 
-    function updatePromoCodeAllowance(string memory _tierId, bool _allowPromoCode) public onlyOperator {
-        tiers[_tierId].allowPromoCode = _allowPromoCode;
-    }
-
-    function updateWalletPromoCodeAllowance(string memory _tierId, bool _allowWalletPromoCode) public onlyOperator {
-        tiers[_tierId].allowWalletPromoCode = _allowWalletPromoCode;
-    }
-
-    function updateTierStartTime(string memory _tierId, uint256 _startTime) public onlyOperator {
-        require(_startTime > block.timestamp && _startTime < tiers[_tierId].endTime, "Invalid start time");
-        tiers[_tierId].startTime = _startTime;
-    }
-
-    function updateMaxAllocationPerWallet(string memory _tierId, uint256 _maxAllocationPerWallet) public onlyOperator {
-        tiers[_tierId].maxAllocationPerWallet = _maxAllocationPerWallet;
-    }
-
-    function updateTierEndTime(string memory _tierId, uint256 _endTime) public onlyOperator {
-        require(_endTime > block.timestamp && tiers[_tierId].startTime < _endTime, "Invalid end time");
-        tiers[_tierId].endTime = _endTime;
-    }
-
-    function updateClaimRewardsEnabled(bool _claimRewardsEnabled) public onlyOperator {
+    function updateClaimRewardsEnabled(bool _claimRewardsEnabled) external {
+        _checkOperator();
         claimRewardsEnabled = _claimRewardsEnabled;
     }
 
     // owner only ops functions
-    function updateRewards(uint8 _baseOwnerPercentage, uint8 _masterOwnerPercentage) public onlyOwner {
+    function updateRewards(uint8 _baseOwnerPercentage, uint8 _masterOwnerPercentage) external onlyOwner {
         require(_baseOwnerPercentage <= MAX_BASE_OWNER_PERCENTAGE, "Invalid base owner percentage");
         require(_masterOwnerPercentage <= MAX_MASTER_OWNER_PERCENTAGE, "Invalid master owner percentage");
         baseOwnerPercentage = _baseOwnerPercentage;
         masterOwnerPercentage = _masterOwnerPercentage;
     }
 
-    function updateAddressRewards(uint8 _addressPromoCodePercentage) public onlyOwner {
+    function updateAddressRewards(uint8 _addressPromoCodePercentage) external onlyOwner {
         require(_addressPromoCodePercentage <= MAX_BASE_OWNER_PERCENTAGE, "Invalid address promo code percentage");
         addressPromoCodePercentage = _addressPromoCodePercentage;
     }
 
-    function updateAddressDiscount(uint8 _addressPromoCodeDiscountPercentage) public onlyOwner {
+    function updateAddressDiscount(uint8 _addressPromoCodeDiscountPercentage) external onlyOwner {
         require(_addressPromoCodeDiscountPercentage <= 100, "Invalid address promo code discount percentage");
         addressPromoCodeDiscountPercentage = _addressPromoCodeDiscountPercentage;
     }
@@ -633,7 +567,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     }
 
     // view function for ops
-    function getAllPromoCodeInfo(uint256 fromIdx, uint256 toIdx) public view returns (PromoCode[] memory) {
+    function getAllPromoCodeInfo(uint256 fromIdx, uint256 toIdx) external view returns (PromoCode[] memory) {
         require(fromIdx < toIdx, "Invalid range");
         if (toIdx > allPromoCodes.length) {
             toIdx = allPromoCodes.length;
@@ -645,11 +579,11 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         return promoCodeInfos;
     }
 
-    function getPromoCodeLength() public view returns (uint256) {
+    function getPromoCodeLength() external view returns (uint256) {
         return allPromoCodes.length;
     }
 
-    function getAllPromoCodes(uint256 fromIdx, uint256 toIdx) public view returns (string[] memory) {
+    function getAllPromoCodes(uint256 fromIdx, uint256 toIdx) external view returns (string[] memory) {
         require(fromIdx < toIdx, "Invalid range");
         if (toIdx > allPromoCodes.length) {
             toIdx = allPromoCodes.length;
@@ -661,7 +595,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         return promoCodeList;
     }
 
-    function getOwnerPromoCodes(address owner) public view returns (string[] memory) {
+    function getOwnerPromoCodes(address owner) external view returns (string[] memory) {
         uint256 length = ownerPromoCodes[owner].length;
         string[] memory promoCodeList = new string[](length);
         for (uint i = 0; i < length; i++) {
@@ -671,7 +605,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     }
 
 
-    function getAllTierIds() public view returns (string[] memory) {
+    function getAllTierIds() external view returns (string[] memory) {
         return tierIds;
     }
 
@@ -689,9 +623,8 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         return sum;
     }
 
-
     // util function
-    function addressToString(address _addr) public pure returns (string memory) {
+    function addressToString(address _addr) internal pure returns (string memory) {
         return Strings.toHexString(uint256(uint160(_addr)), 20);
     }
 }
