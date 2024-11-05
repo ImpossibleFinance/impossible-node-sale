@@ -28,6 +28,6 @@ echo "Contract $OUTPUT_CONTRACT flattened successfully"
 
 echo "Compiling contract $OUTPUT_CONTRACT with version $COMPILER_VERSION"
 # compile contract
-docker run -v $PWD:/sources ethereum/solc:$COMPILER_VERSION --ir-optimized --optimize --optimize-runs=200 --bin /sources/contracts/${OUTPUT_CONTRACT}.sol --include-path /sources/node_modules/ --base-path /sources -o /sources/${OUTPUT_CONTRACT}.bin --overwrite
+docker run -v $PWD:/sources ethereum/solc:$COMPILER_VERSION --via-ir --ir-optimized --optimize --optimize-runs=200 --bin /sources/contracts/${OUTPUT_CONTRACT}.sol --include-path /sources/node_modules/ --base-path /sources -o /sources/${OUTPUT_CONTRACT}.bin --overwrite
 
 abigen --abi=abi/contracts/${OUTPUT_CONTRACT}.sol/${OUTPUT_CONTRACT}.json --pkg=${OUTPUT_CONTRACT} --out=./resources/go-file/${OUTPUT_CONTRACT}.go --bin ${OUTPUT_CONTRACT}.bin/${OUTPUT_CONTRACT}.bin
