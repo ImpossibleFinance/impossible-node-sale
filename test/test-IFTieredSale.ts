@@ -725,7 +725,7 @@ describe('TieredSale Contract', function () {
         })
     })
 
-    describe('tiered sale: purchasing in with signature', function () {
+    describe('tiered sale: purchasing with signature', function () {
         const maxPurchasePerWallet = 10
 
         this.beforeEach(async function () {
@@ -789,5 +789,86 @@ describe('TieredSale Contract', function () {
                 ethers.constants.AddressZero,
             )).to.be.revertedWith('Invalid signature')
         })
+
+        it('should handle signature purchases with promo code and wallet promo code correctly', async function () {
+            const purchaseAmount = 5
+            const promoCode = 'SIGPROMO'
+            const discount = 10
+            const walletPromoAddress = referrer.address
+
+            // Add regular promo code
+            await tieredSale.connect(operator).addPromoCode(
+                promoCode,
+                discount,
+                referrer.address,
+                operator.address,
+                0,
+                0
+            )
+
+            // Create message hash for signature
+            const messageHash = ethers.utils.solidityKeccak256(
+                ['address', 'string', 'uint256'],
+                [user.address, tierId, maxPurchasePerWallet]
+            )
+
+            // Sign the message hash with operator
+            const signature = await operator.signMessage(ethers.utils.arrayify(messageHash))
+
+            // Test with regular promo code
+            await tieredSale.connect(user).signedPurchaseInTierWithCode(
+                tierId,
+                purchaseAmount,
+                maxPurchasePerWallet,
+                signature,
+                promoCode,
+                ethers.constants.AddressZero
+            )
+
+            // Verify purchase with promo code
+            expect(await tieredSale.purchasedAmountPerTier(tierId, user.address))
+                .to.equal(purchaseAmount)
+
+
+            // Create message hash for signature
+            const referrerMessageHash = ethers.utils.solidityKeccak256(
+                ['address', 'string', 'uint256'],
+                [user.address, tierId, maxPurchasePerWallet]
+            )
+
+            // Sign the message hash with operator
+            const referrerSignature = await operator.signMessage(ethers.utils.arrayify(referrerMessageHash))
+            // Activate wallet promo code by having referrer make a purchase
+            await tieredSale.connect(referrer).signedPurchaseInTierWithCode(
+                tierId,
+                1,
+                maxPurchasePerWallet,
+                referrerSignature,
+                '',
+                ethers.constants.AddressZero
+            )
+
+            // Test with wallet promo code
+            await tieredSale.connect(user).signedPurchaseInTierWithCode(
+                tierId,
+                purchaseAmount,
+                maxPurchasePerWallet,
+                signature,
+                '',
+                walletPromoAddress
+            )
+
+            // Verify total purchases
+            expect(await tieredSale.purchasedAmountPerTier(tierId, user.address))
+                .to.equal(purchaseAmount * 2)
+
+            // Verify promo code rewards were recorded
+            const promoInfo = await tieredSale.promoCodes(promoCode)
+            const walletPromoInfo = await tieredSale.promoCodes(walletPromoAddress.toLowerCase())
+
+            expect(promoInfo.promoCodeOwnerEarnings).to.be.gt(0)
+            expect(walletPromoInfo.promoCodeOwnerEarnings).to.be.gt(0)
+        })
+
     })
 })

@@ -331,7 +331,7 @@ contract IFTieredSale is IFFundable, AccessControl {
 
         uint256 price = tiers[_tierId].price;
 
-        if (bytes(promoCode).length == 0) {
+        if (bytes(promoCode).length != 0) {
             uint8 discount = calculateDiscount(promoCode);
             price = price * (100 - discount) / 100;  // in gwei
             if (isRegularPromoCode) {
