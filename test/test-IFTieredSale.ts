@@ -822,12 +822,14 @@ describe('TieredSale Contract', function () {
     })
 
     describe('tiered sale: purchasing with signature', function () {
+        const price = ethers.utils.parseEther('0.3')
         const maxPurchasePerWallet = 10
-        const allocatedPaymentAmount = ethers.utils.parseEther('1').mul(maxPurchasePerWallet)
+        const allocatedPaymentAmount = price.mul(maxPurchasePerWallet)
 
         this.beforeEach(async function () {
             await tieredSale.connect(operator).setTier(...await prepareTierArgs({
                 ...defaultTierSettings,
+                price: price,
                 requireSignature: true,
             })).then((tx: { wait: () => any }) => tx.wait())
 

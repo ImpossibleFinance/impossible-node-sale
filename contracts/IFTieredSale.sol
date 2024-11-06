@@ -19,6 +19,7 @@ contract IFTieredSale is IFFundable, AccessControl {
     string[] public tierIds;
     mapping(string => Tier) public tiers;
     mapping(string => mapping(address => uint256)) public purchasedAmountPerTier; // tierId => address => amount in ether
+    mapping(address => uint256) public paymentReceivedFromUser; // address => amount of payment token in wei
     mapping(string => uint256) public codePurchaseAmount; // promo code => total purchased amount in ether
     mapping(string => uint256) public saleTokenPurchasedByTier; // tierId => total purchased amount in ether
     mapping(string => PromoCode) public promoCodes;
@@ -326,7 +327,7 @@ contract IFTieredSale is IFFundable, AccessControl {
                 _updateWalletPromoCodeRewards(_walletPromoCode, price * _amount);
             }
         }
-        require(getPaymentReceivedFromUser(msg.sender) + (_amount * price) <= allocatedPayment, "Purchase exceeds allocation");
+        require(paymentReceivedFromUser[msg.sender] + (_amount * price) <= allocatedPayment, "Purchase exceeds payment allocation");
         executePurchase(_tierId, _amount, price, promoCode);
     }
 
@@ -345,6 +346,7 @@ contract IFTieredSale is IFFundable, AccessControl {
             "Exceed tier's total purchasable"
         );
 
+        paymentReceivedFromUser[msg.sender] += _amount * _price;
         totalPaymentReceived += _amount * _price;
         purchasedAmountPerTier[_tierId][msg.sender] += _amount;
         saleTokenPurchasedByTier[_tierId] += _amount;
@@ -647,25 +649,6 @@ contract IFTieredSale is IFFundable, AccessControl {
 
     function getAllTierIds() external view returns (string[] memory) {
         return tierIds;
-    }
-
-    /**
-     * Gets the total payment amount received from the specified address across all tiers.
-     * @param _addr The address to get the total payment amount for.
-     * @return The total payment amount received from the specified address (in wei).
-     */
-    function getPaymentReceivedFromUser(address _addr) public view returns (uint256) {
-        uint256 sum = 0;
-        for (uint i = 0; i < tierIds.length; i++) {
-            if (tiers[tierIds[i]].price == 0) {
-                continue;
-            }
-            if (purchasedAmountPerTier[tierIds[i]][_addr] > 0) {
-                // return true if the address has purchased at least one node
-                sum += (purchasedAmountPerTier[tierIds[i]][_addr]) * tiers[tierIds[i]].price;
-            }
-        }
-        return sum;
     }
 
     // util function
