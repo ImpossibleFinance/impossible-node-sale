@@ -273,16 +273,26 @@ contract IFTieredSale is IFFundable, AccessControl {
         executePurchase(_tierId, _amount, price, finalPromoCode);
     }
 
+    /// Allows a user to purchase tokens in a specific tier of a tiered sale, using a signed purchase request.
+    /// The function verifies the signature, checks that the purchase does not exceed the user's allocated payment,
+    /// applies any applicable promo code discounts, and then executes the purchase.
+    ///
+    /// @param _tierId The ID of the tier in which the purchase is being made.
+    /// @param _amount The amount of nodes the user wants to purchase.
+    /// @param allocatedPayment The maximum amount of payment the user has allocated for this purchase (in wei).
+    /// @param signature The signed purchase request.
+    /// @param _promoCode An optional promo code to apply to the purchase.
+    /// @param _walletPromoCode An optional wallet-based promo code to apply to the purchase.
     function signedPurchaseInTierWithCode(
         string memory _tierId,
         uint256 _amount,
-        uint256 _allocation,
+        uint256 allocatedPayment,
         bytes calldata signature,
         string memory _promoCode,
         address _walletPromoCode
     ) public {
         require(tiers[_tierId].requireSignature, "Use whitelisted purchase");
-        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, _tierId, _allocation));
+        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, address(this), _tierId, allocatedPayment));
 
         bytes32 message = ECDSA.toEthSignedMessageHash(messageHash);
 
@@ -291,7 +301,6 @@ contract IFTieredSale is IFFundable, AccessControl {
         // the message has to be signed by operator
         require(hasRole(OPERATOR_ROLE, signer), "Invalid signature");
 
-        require(getTotalPurchasedAmount(msg.sender) + _amount <= _allocation, "Purchase exceeds allocation");
 
         require((bytes(_promoCode).length == 0 || _walletPromoCode == address(0)), "One promo code only");
         bool isRegularPromoCode = true;
@@ -317,6 +326,7 @@ contract IFTieredSale is IFFundable, AccessControl {
                 _updateWalletPromoCodeRewards(_walletPromoCode, price * _amount);
             }
         }
+        require(getPaymentReceivedFromUser(msg.sender) + (_amount * price) <= allocatedPayment, "Purchase exceeds allocation");
         executePurchase(_tierId, _amount, price, promoCode);
     }
 
@@ -639,7 +649,12 @@ contract IFTieredSale is IFFundable, AccessControl {
         return tierIds;
     }
 
-    function getTotalPurchasedAmount(address _addr) public view returns (uint256) {
+    /**
+     * Gets the total payment amount received from the specified address across all tiers.
+     * @param _addr The address to get the total payment amount for.
+     * @return The total payment amount received from the specified address (in wei).
+     */
+    function getPaymentReceivedFromUser(address _addr) public view returns (uint256) {
         uint256 sum = 0;
         for (uint i = 0; i < tierIds.length; i++) {
             if (tiers[tierIds[i]].price == 0) {
@@ -647,7 +662,7 @@ contract IFTieredSale is IFFundable, AccessControl {
             }
             if (purchasedAmountPerTier[tierIds[i]][_addr] > 0) {
                 // return true if the address has purchased at least one node
-                sum += purchasedAmountPerTier[tierIds[i]][_addr];
+                sum += (purchasedAmountPerTier[tierIds[i]][_addr]) * tiers[tierIds[i]].price;
             }
         }
         return sum;

@@ -823,6 +823,7 @@ describe('TieredSale Contract', function () {
 
     describe('tiered sale: purchasing with signature', function () {
         const maxPurchasePerWallet = 10
+        const allocatedPaymentAmount = ethers.utils.parseEther('1').mul(maxPurchasePerWallet)
 
         this.beforeEach(async function () {
             await tieredSale.connect(operator).setTier(...await prepareTierArgs({
@@ -835,57 +836,57 @@ describe('TieredSale Contract', function () {
             mineTimeDelta(START_TIME_DELTA)
         })
 
-        // it('should allow purchasing in with signature', async function () {
-        //     // Create the message hash
-        //     const messageHash = ethers.utils.solidityKeccak256(
-        //         ['address', 'string', 'uint256'],
-        //         [user.address, tierId, maxPurchasePerWallet]
-        //     )
+        it('should allow purchasing in with signature', async function () {
+            // Create the message hash
+            const messageHash = ethers.utils.solidityKeccak256(
+                ['address', 'address', 'string', 'uint256'],
+                [user.address, tieredSale.address, tierId, allocatedPaymentAmount]
+            )
 
-        //     // Sign the message hash
-        //     const signature = await operator.signMessage(ethers.utils.arrayify(messageHash))
-        //     await tieredSale.connect(user).signedPurchaseInTierWithCode(
-        //         tierId,
-        //         maxPurchasePerWallet,
-        //         maxPurchasePerWallet,
-        //         signature,
-        //         '',
-        //         ethers.constants.AddressZero,
-        //     )
-        //     expect(await tieredSale.purchasedAmountPerTier(tierId, user.address)).to.equal(maxPurchasePerWallet)
-        // })
-        // it('should reject purchasing in with invalid signature', async function () {
-        //     // invalid signer
-        //     let messageHash = ethers.utils.solidityKeccak256(
-        //         ['address', 'string', 'uint256'],
-        //         [user.address, tierId, maxPurchasePerWallet]
-        //     )
-        //     let signature = await user.signMessage(ethers.utils.arrayify(messageHash))
-        //     expect(tieredSale.connect(user).signedPurchaseInTierWithCode(
-        //         tierId,
-        //         maxPurchasePerWallet,
-        //         maxPurchasePerWallet,
-        //         signature,
-        //         '',
-        //         ethers.constants.AddressZero,
-        //     )).to.be.revertedWith('Invalid signature')
+            // Sign the message hash
+            const signature = await operator.signMessage(ethers.utils.arrayify(messageHash))
+            await tieredSale.connect(user).signedPurchaseInTierWithCode(
+                tierId,
+                maxPurchasePerWallet,
+                allocatedPaymentAmount,
+                signature,
+                '',
+                ethers.constants.AddressZero,
+            )
+            expect(await tieredSale.purchasedAmountPerTier(tierId, user.address)).to.equal(maxPurchasePerWallet)
+        })
+        it('should reject purchasing in with invalid signature', async function () {
+            // invalid signer
+            let messageHash = ethers.utils.solidityKeccak256(
+                ['address', 'address', 'string', 'uint256'],
+                [user.address, tieredSale.address, tierId, allocatedPaymentAmount]
+            )
+            let signature = await user.signMessage(ethers.utils.arrayify(messageHash))
+            expect(tieredSale.connect(user).signedPurchaseInTierWithCode(
+                tierId,
+                maxPurchasePerWallet,
+                allocatedPaymentAmount,
+                signature,
+                '',
+                ethers.constants.AddressZero,
+            )).to.be.revertedWith('Invalid signature')
 
-        //     // invalid allocation
-        //     messageHash = ethers.utils.solidityKeccak256(
-        //         ['address', 'string', 'uint256'],
-        //         [user.address, tierId, maxPurchasePerWallet + 1]
-        //     )
+            // invalid allocation
+            messageHash = ethers.utils.solidityKeccak256(
+                ['address', 'address', 'string', 'uint256'],
+                [user.address, tieredSale.address, tierId, allocatedPaymentAmount.sub(1)]
+            )
 
-        //     signature = await operator.signMessage(ethers.utils.arrayify(messageHash))
-        //     expect(tieredSale.connect(user).signedPurchaseInTierWithCode(
-        //         tierId,
-        //         maxPurchasePerWallet,
-        //         maxPurchasePerWallet,
-        //         signature,
-        //         '',
-        //         ethers.constants.AddressZero,
-        //     )).to.be.revertedWith('Invalid signature')
-        // })
+            signature = await operator.signMessage(ethers.utils.arrayify(messageHash))
+            expect(tieredSale.connect(user).signedPurchaseInTierWithCode(
+                tierId,
+                maxPurchasePerWallet,
+                allocatedPaymentAmount,
+                signature,
+                '',
+                ethers.constants.AddressZero,
+            )).to.be.revertedWith('Invalid signature')
+        })
 
         it('should handle signature purchases with promo code and wallet promo code correctly', async function () {
             const purchaseAmount = 5
@@ -905,8 +906,8 @@ describe('TieredSale Contract', function () {
 
             // Create message hash for signature
             const messageHash = ethers.utils.solidityKeccak256(
-                ['address', 'string', 'uint256'],
-                [user.address, tierId, maxPurchasePerWallet]
+                ['address', 'address', 'string', 'uint256'],
+                [user.address, tieredSale.address, tierId, allocatedPaymentAmount]
             )
 
             // Sign the message hash with operator
@@ -916,7 +917,7 @@ describe('TieredSale Contract', function () {
             await tieredSale.connect(user).signedPurchaseInTierWithCode(
                 tierId,
                 purchaseAmount,
-                maxPurchasePerWallet,
+                allocatedPaymentAmount,
                 signature,
                 promoCode,
                 ethers.constants.AddressZero
@@ -929,8 +930,8 @@ describe('TieredSale Contract', function () {
 
             // Create message hash for signature
             const referrerMessageHash = ethers.utils.solidityKeccak256(
-                ['address', 'string', 'uint256'],
-                [referrer.address, tierId, maxPurchasePerWallet]
+                ['address', 'address', 'string', 'uint256'],
+                [referrer.address, tieredSale.address, tierId, allocatedPaymentAmount]
             )
 
             // Sign the message hash with operator
@@ -939,7 +940,7 @@ describe('TieredSale Contract', function () {
             await tieredSale.connect(referrer).signedPurchaseInTierWithCode(
                 tierId,
                 1,
-                maxPurchasePerWallet,
+                allocatedPaymentAmount,
                 referrerSignature,
                 '',
                 ethers.constants.AddressZero
@@ -949,7 +950,7 @@ describe('TieredSale Contract', function () {
             await tieredSale.connect(user).signedPurchaseInTierWithCode(
                 tierId,
                 purchaseAmount,
-                maxPurchasePerWallet,
+                allocatedPaymentAmount,
                 signature,
                 '',
                 walletPromoAddress
