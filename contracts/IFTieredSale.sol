@@ -308,7 +308,7 @@ contract IFTieredSale is IFFundable, AccessControl {
         string memory promoCode;
         if (bytes(_promoCode).length != 0) {
             _validatePromoCode(_promoCode);
-            promoCode = addressToString(_walletPromoCode);
+            promoCode = _promoCode
         }
         if (_walletPromoCode != address(0)) {
             require(validateWalletPromoCode(_walletPromoCode), "Unactivated wallet code");
