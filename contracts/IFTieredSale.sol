@@ -208,7 +208,8 @@ contract IFTieredSale is IFFundable, AccessControl {
     ) internal pure {
         require(bytes(code).length > 0, "Invalid promo code");
         require(discountPercentage <= 100, "Invalid discount percentage");
-        require(promoCodeOwnerAddress != masterOwnerAddress, "Same owner and master");
+        require(promoCodeOwnerAddress != address(0), "Invalid promo code owner address");
+        require(promoCodeOwnerAddress != masterOwnerAddress, "Promo code owner and master owner cannot be the same");
         require(baseOwnerPercentageOverride <= MAX_BASE_OWNER_PERCENTAGE, "Invalid base owner percentage");
         require(masterOwnerPercentageOverride <= MAX_MASTER_OWNER_PERCENTAGE, "Invalid master owner percentage");
     }
@@ -485,14 +486,12 @@ contract IFTieredSale is IFFundable, AccessControl {
             return false;
         }
 
-        uint256 sum = 0;
         for (uint i = 0; i < tierIds.length; i++) {
             if (tiers[tierIds[i]].price == 0) {
                 continue;
             }
             if (purchasedAmountPerTier[tierIds[i]][promoCodeAddress] > 0) {
                 // return true if the address has purchased at least one node
-                sum += purchasedAmountPerTier[tierIds[i]][promoCodeAddress];
                 return true;
             }
         }
@@ -501,7 +500,7 @@ contract IFTieredSale is IFFundable, AccessControl {
 
     function _validatePromoCode(string memory _promoCode) internal view {
         require(bytes(_promoCode).length > 0, "Invalid promo code");
-        require(promoCodes[_promoCode].discountPercentage > 0, "Invalid promo code");
+        require(promoCodes[_promoCode].promoCodeOwnerAddress != address(0), "Invalid promo code");
     }
 
     // Override the renounceOwnership function to disable it
