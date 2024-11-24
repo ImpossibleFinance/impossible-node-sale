@@ -1,3 +1,4 @@
+import hre from 'hardhat'
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { BigNumber, Contract } from 'ethers'
@@ -19,6 +20,7 @@ type TierSettings = {
     allowWalletPromoCode: boolean;
     startTime: number;
     endTime: number;
+    requireSignature: boolean;
 };
 
 
@@ -39,6 +41,7 @@ async function prepareTierArgs(tierSettings: TierSettings) {
         tierSettings.allowWalletPromoCode,
         startTime,
         startTime + 100000,
+        tierSettings.requireSignature,
     ]
 }
 
@@ -67,7 +70,8 @@ describe('TieredSale Contract', function () {
         allowPromoCode: true,
         allowWalletPromoCode: true,
         startTime: 0,
-        endTime: 2**31 - 1, // max of unix timestamp
+        endTime: 2 ** 31 - 1, // max of unix timestamp
+        requireSignature: false,
     }
 
     const operatorRole = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('OPERATOR_ROLE'))
@@ -126,40 +130,40 @@ describe('TieredSale Contract', function () {
             expect(await tieredSale.owner()).to.equal(deployer.address)
             expect(await tieredSale.hasRole(await tieredSale.DEFAULT_ADMIN_ROLE(), deployer.address)).to.be.true
             expect(await tieredSale.hasRole(await tieredSale.DEFAULT_ADMIN_ROLE(), user.address)).to.be.false
-        
+
             // Transfer ownership
             await tieredSale.transferOwnership(user.address)
 
             mineNext()
-        
+
             // Check final state
             expect(await tieredSale.owner()).to.equal(user.address)
             expect(await tieredSale.hasRole(await tieredSale.DEFAULT_ADMIN_ROLE(), deployer.address)).to.be.false
             expect(await tieredSale.hasRole(await tieredSale.DEFAULT_ADMIN_ROLE(), user.address)).to.be.true
-        
+
             // Attempt to call an onlyOwner function with old owner (should fail)
             await expect(tieredSale.connect(deployer).updateRewards(5, 1)).to.be.revertedWith('Ownable: caller is not the owner')
-        
+
             // Call an onlyOwner function with new owner (should succeed)
             await expect(tieredSale.connect(user).updateRewards(5, 1)).to.not.be.reverted
-        
+
             // Attempt to call an onlyRole(DEFAULT_ADMIN_ROLE) function with old owner (should fail)
             await expect(tieredSale.connect(deployer).addOperator(referrer.address)).to.be.reverted
-        
+
             // Call an onlyRole(DEFAULT_ADMIN_ROLE) function with new owner (should succeed)
             await expect(tieredSale.connect(user).addOperator(referrer.address)).to.not.be.reverted
-          })
+        })
     })
 
     describe('tiered sale: tier management', function () {
         it('should allow operator to create a tier', async function () {
             const tierId = 'tier1'
             await tieredSale.connect(deployer).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    tierId: tierId,
-                    price: ethers.utils.parseEther('1'),
-                    maxTotalPurchasable: 1000,
-                })).then((tx: { wait: () => any }) => tx.wait())
+                ...defaultTierSettings,
+                tierId: tierId,
+                price: ethers.utils.parseEther('1'),
+                maxTotalPurchasable: 1000,
+            })).then((tx: { wait: () => any }) => tx.wait())
             mineTimeDelta(START_TIME_DELTA)
             const tier = await tieredSale.tiers(tierId)
             expect(tier.price).to.equal(ethers.utils.parseEther('1'))
@@ -176,6 +180,66 @@ describe('TieredSale Contract', function () {
         it('Should fail when adding a promo code with invalid discount', async function () {
             await expect(tieredSale.connect(operator).addPromoCode('TOOMUCH', 101, user.getAddress(), operator.getAddress(), 0, 0))
                 .to.be.revertedWith('Invalid discount percentage')
+        })
+        it('should correctly update promo code and owner mappings', async function () {
+            const initialCodes = ['CODE1', 'CODE2', 'CODE3', 'CODE4', 'CODE5']
+            const initialDiscount = 20
+
+            // Add initial promo codes
+            for (const code of initialCodes) {
+                await tieredSale.addPromoCode(
+                    code,
+                    initialDiscount,
+                    user.address,
+                    operator.address,
+                    0,
+                    0
+                )
+            }
+
+            // Verify initial ownerPromoCodes
+            expect(await tieredSale.getOwnerPromoCodes(user.address)).to.deep.equal(initialCodes)
+            expect(await tieredSale.getOwnerPromoCodes(operator.address)).to.deep.equal(initialCodes)
+
+            // Update only some promo codes with new owners
+            const newDiscount = 25
+            const codesToUpdate = ['CODE1', 'CODE3', 'CODE5'] // randomly selected codes to update
+            for (const code of codesToUpdate) {
+                await tieredSale.updatePromocode(
+                    code,
+                    newDiscount,
+                    deployer.address,
+                    referrer.address,
+                    0,
+                    0
+                )
+            }
+
+            // Verify updated promo codes
+            for (const code of codesToUpdate) {
+                const updatedPromo = await tieredSale.promoCodes(code)
+                expect(updatedPromo.discountPercentage).to.equal(newDiscount)
+                expect(updatedPromo.promoCodeOwnerAddress).to.equal(deployer.address)
+                expect(updatedPromo.masterOwnerAddress).to.equal(referrer.address)
+            }
+
+            // Verify old owners still have some promo codes
+            const oldOwnerCodes = await tieredSale.getOwnerPromoCodes(user.address)
+            const expectedOldOwnerCodes = ['CODE2', 'CODE4']
+            expect(oldOwnerCodes.slice().sort()).to.deep.equal(expectedOldOwnerCodes.slice().sort())
+
+            const oldOperatorCodes = await tieredSale.getOwnerPromoCodes(operator.address)
+            const expectedOldOperatorCodes = ['CODE2', 'CODE4']
+            expect(oldOperatorCodes.slice().sort()).to.deep.equal(expectedOldOperatorCodes.slice().sort())
+
+            // Verify new owners have their promo codes
+            const newOwnerCodes = await tieredSale.getOwnerPromoCodes(deployer.address)
+            const expectedNewOwnerCodes = ['CODE1', 'CODE3', 'CODE5']
+            expect(newOwnerCodes.slice().sort()).to.deep.equal(expectedNewOwnerCodes.slice().sort())
+
+            const newReferrerCodes = await tieredSale.getOwnerPromoCodes(referrer.address)
+            const expectedNewReferrerCodes = ['CODE1', 'CODE3', 'CODE5']
+            expect(newReferrerCodes.slice().sort()).to.deep.equal(expectedNewReferrerCodes.slice().sort())
         })
     })
     describe('tiered sale: purchasing in tiers with promo codes', function () {
@@ -194,9 +258,9 @@ describe('TieredSale Contract', function () {
             )
             const merkleRoot = computeMerkleRoot(leaves)
             await tieredSale.connect(operator).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    whitelistRootHash: merkleRoot,
-                })).then((tx: { wait: () => any }) => tx.wait())
+                ...defaultTierSettings,
+                whitelistRootHash: merkleRoot,
+            })).then((tx: { wait: () => any }) => tx.wait())
 
             await tieredSale.connect(operator).addPromoCode(promoCode, discount, referrer.address, operator.address, 0, 0).then((tx: { wait: () => any }) => tx.wait())
 
@@ -205,14 +269,16 @@ describe('TieredSale Contract', function () {
             await paymentToken.connect(user).approve(tieredSale.address, allocationAmount).then((tx: { wait: () => any }) => tx.wait())
             mineTimeDelta(START_TIME_DELTA)
         })
-    
+
         it('should allow purchasing with a valid promo code and apply discount', async function () {
-            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+            await tieredSale.connect(user).whitelistedPurchaseInTier(
                 tierId,  // tierId
                 3,  // amount
                 computeMerkleProofByAddress(leaves, addressValMap, user.address),  // merkleProof
+                nodeAllocated,  // allocation
                 promoCode,  // promoCode
-                nodeAllocated  // allocation
+                ethers.constants.AddressZero,
+
 
             ).then((tx: { wait: () => any }) => tx.wait())
 
@@ -224,40 +290,43 @@ describe('TieredSale Contract', function () {
             mineNext()
             const tierId = 'maxAllocTier'
             await tieredSale.connect(operator).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    tierId: 'maxAllocTier',
-                    maxAllocationPerWallet: maxPurchasePerWallet,
-                    maxTotalPurchasable: maxTotalPurchasable,
-                })).then((tx: { wait: () => any }) => tx.wait())
+                ...defaultTierSettings,
+                tierId: 'maxAllocTier',
+                maxAllocationPerWallet: maxPurchasePerWallet,
+                maxTotalPurchasable: maxTotalPurchasable,
+            })).then((tx: { wait: () => any }) => tx.wait())
             mineTimeDelta(START_TIME_DELTA)
-            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+            await tieredSale.connect(user).whitelistedPurchaseInTier(
                 tierId,
                 maxPurchasePerWallet,
                 computeMerkleProofByAddress(leaves, addressValMap, user.address),  // merkleProof
+                nodeAllocated,
                 promoCode,
-                nodeAllocated
+                ethers.constants.AddressZero,
             )
 
             // Attempt to purchase more than the allowed per wallet
-            await expect(tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+            await expect(tieredSale.connect(user).whitelistedPurchaseInTier(
                 tierId,
                 1,
                 computeMerkleProofByAddress(leaves, addressValMap, user.address),  // merkleProof
+                nodeAllocated,
                 promoCode,
-                nodeAllocated
-            )).to.be.revertedWith('Amount exceeds wallet\'s maximum allocation for this tier')
+                ethers.constants.AddressZero,
+            )).to.be.revertedWith('Exceed wallet allocation')
         })
 
         it('should correctly track promo code usage and earnings', async function () {
             const numPurchase = 3
             const totalCost = price.mul(numPurchase)
             const costAfterDiscount = totalCost.mul(80).div(100)  // 20% discount
-            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+            await tieredSale.connect(user).whitelistedPurchaseInTier(
                 tierId,
                 numPurchase,
                 computeMerkleProofByAddress(leaves, addressValMap, user.address),  // merkleProof
+                nodeAllocated,
                 promoCode,
-                nodeAllocated
+                ethers.constants.AddressZero,
             )
 
             const promo = await tieredSale.promoCodes(promoCode)
@@ -276,33 +345,30 @@ describe('TieredSale Contract', function () {
             const costAfterDiscount = totalCost.mul(80).div(100)  // 20% discount
 
             const expectedOwnerEarnings = costAfterDiscount.mul(8 + 5).div(100) // 8% + 5% (bonus) of 3 ether
-            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+            await tieredSale.connect(user).whitelistedPurchaseInTier(
                 tierId,
                 numPurchase,
                 computeMerkleProofByAddress(leaves, addressValMap, user.address),  // merkleProof
+                nodeAllocated,
                 promoCode,
-                nodeAllocated
+                ethers.constants.AddressZero,
             )
-
-            // Withdraw earnings as the promo code owner
-            await expect(tieredSale.connect(referrer).withdrawPromoCodeRewards(promoCode))
-                .to.emit(tieredSale, 'ReferralRewardWithdrawn')
-                .withArgs(referrer.address, expectedOwnerEarnings) // Based on the previous test's expected earnings
         })
 
         it('should allow purchase from any wallet if whitelistRootHash is empty', async function () {
             await tieredSale.connect(operator).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                })).then((tx: { wait: () => any }) => tx.wait())
+                ...defaultTierSettings,
+            })).then((tx: { wait: () => any }) => tx.wait())
 
             mineTimeDelta(START_TIME_DELTA)
 
-            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+            await tieredSale.connect(user).whitelistedPurchaseInTier(
                 tierId,
                 1,
                 computeMerkleProofByAddress(leaves, addressValMap, user.address),  // merkleProof
+                nodeAllocated,
                 promoCode,
-                nodeAllocated
+                ethers.constants.AddressZero,
             )
         })
 
@@ -312,84 +378,89 @@ describe('TieredSale Contract', function () {
             // unset whitelist
             await tieredSale.connect(deployer).updateWhitelist(tierId, ethers.constants.HashZero)
             // Attempt to purchase in a halted tier should fail
-            await expect(tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+            await expect(tieredSale.connect(user).whitelistedPurchaseInTier(
                 tierId,
                 1,
                 [],
+                allocationAmount,
                 promoCode,
-                allocationAmount
-            )).to.be.revertedWith('Purchases in this tier are currently halted')
-    
+                ethers.constants.AddressZero,
+            )).to.be.revertedWith('Tier is halted')
+
             // Resuming the tier
             await tieredSale.connect(deployer).updateIsHalt(tierId, false)
             // Purchase in resumed tier should succeed
-            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+            await tieredSale.connect(user).whitelistedPurchaseInTier(
                 tierId,
                 1,
                 [],
-                promoCode,
                 allocationAmount,
+                promoCode,
+                ethers.constants.AddressZero,
             )
         })
-    
+
         it('should allow to cash out payment tokens', async function () {
             await tieredSale.connect(operator).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    whitelistRootHash: ethers.constants.HashZero,
-                })).then((tx: { wait: () => any }) => tx.wait())
+                ...defaultTierSettings,
+                whitelistRootHash: ethers.constants.HashZero,
+            })).then((tx: { wait: () => any }) => tx.wait())
             mineTimeDelta(START_TIME_DELTA)
-            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+            await tieredSale.connect(user).whitelistedPurchaseInTier(
                 tierId,
                 1,
                 [],
-                promoCode,
                 allocationAmount,
+                promoCode,
+                ethers.constants.AddressZero,
             )
             const balanceBefore = await paymentToken.balanceOf(deployer.address)
             await tieredSale.connect(deployer).cashPaymentToken(1)
             const balanceAfter = await paymentToken.balanceOf(deployer.address)
-    
+
             expect(balanceAfter.sub(balanceBefore)).to.equal(1)
         })
-    
+
         it('should allow to cash out sale tokens', async function () {
             const cashTier1 = 'cashTier1'
             const cashTier2 = 'cashTier2'
             const numPurchase = 20
 
             await tieredSale.connect(deployer).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    tierId: cashTier1,
-                    maxTotalPurchasable: allocationAmount,
-                    maxAllocationPerWallet: allocationAmount,
-                })).then((tx: { wait: () => any }) => tx.wait())
+                ...defaultTierSettings,
+                tierId: cashTier1,
+                maxTotalPurchasable: allocationAmount,
+                maxAllocationPerWallet: allocationAmount,
+            })).then((tx: { wait: () => any }) => tx.wait())
             mineTimeDelta(START_TIME_DELTA)
-            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+            await tieredSale.connect(user).whitelistedPurchaseInTier(
                 cashTier1,
                 numPurchase,
                 [],
-                promoCode,
                 allocationAmount,
+                promoCode,
+                ethers.constants.AddressZero,
             )
             await tieredSale.connect(deployer).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    tierId: cashTier2,
-                    maxTotalPurchasable: allocationAmount,
-                    maxAllocationPerWallet: allocationAmount,
-                })).then((tx: { wait: () => any }) => tx.wait())
+                ...defaultTierSettings,
+                tierId: cashTier2,
+                maxTotalPurchasable: allocationAmount,
+                maxAllocationPerWallet: allocationAmount,
+            })).then((tx: { wait: () => any }) => tx.wait())
             mineTimeDelta(START_TIME_DELTA)
-            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+            await tieredSale.connect(user).whitelistedPurchaseInTier(
                 cashTier2,
                 numPurchase,
                 [],
-                promoCode,
                 allocationAmount,
+                promoCode,
+                ethers.constants.AddressZero,
             )
             mineTimeDelta(endTime - await getBlockTime())
             const balanceBefore = await saleToken.balanceOf(deployer.address)
             await tieredSale.connect(deployer).cash()
             const balanceAfter = await saleToken.balanceOf(deployer.address)
-    
+
             expect(balanceAfter.sub(balanceBefore)).to.be.equals((fundAmount - numPurchase * 2).toString())
         })
 
@@ -401,29 +472,29 @@ describe('TieredSale Contract', function () {
             const tier2 = 'Public2'
             const amount1 = 1
             const amount2 = 2
-        
+
             // Setup two tiers
             await tieredSale.connect(operator).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    tierId: tier1,
-                    price: ethers.utils.parseEther('0.5'),
-                    maxTotalPurchasable: 100,
-                    maxAllocationPerWallet: 1000,
-                }))
+                ...defaultTierSettings,
+                tierId: tier1,
+                price: ethers.utils.parseEther('0.5'),
+                maxTotalPurchasable: 100,
+                maxAllocationPerWallet: 1000,
+            }))
             await tieredSale.connect(operator).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    tierId: tier2,
-                    price: ethers.utils.parseEther('1'),
-                    maxTotalPurchasable: 50,
-                    maxAllocationPerWallet: 1000,
-                }))
-        
+                ...defaultTierSettings,
+                tierId: tier2,
+                price: ethers.utils.parseEther('1'),
+                maxTotalPurchasable: 50,
+                maxAllocationPerWallet: 1000,
+            }))
+
             // Simulate purchases in both tiers
             await paymentToken.connect(user).approve(tieredSale.address, ethers.utils.parseEther('10'))
             mineTimeDelta(START_TIME_DELTA)
-            await tieredSale.connect(user).whitelistedPurchaseInTier(tier1, amount1, [], 1000)
-            await tieredSale.connect(user).whitelistedPurchaseInTier(tier2, amount2, [], 1000)
-        
+            await tieredSale.connect(user).whitelistedPurchaseInTier(tier1, amount1, [], 1000, '', ethers.constants.AddressZero)
+            await tieredSale.connect(user).whitelistedPurchaseInTier(tier2, amount2, [], 1000, '', ethers.constants.AddressZero)
+
             // Check totals for each tier
             const totalPurchased1 = await tieredSale.saleTokenPurchasedByTier(tier1)
             const totalPurchased2 = await tieredSale.saleTokenPurchasedByTier(tier2)
@@ -432,54 +503,54 @@ describe('TieredSale Contract', function () {
         })
         it('should reject purchases with invalid promo codes', async function () {
             await tieredSale.connect(deployer).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    tierId: tierId,
-                }))
+                ...defaultTierSettings,
+                tierId: tierId,
+            }))
             const invalidPromo = 'INVALID100'
             const amount = 1
-        
+
             await paymentToken.connect(user).approve(tieredSale.address, ethers.utils.parseEther('1'))
             mineTimeDelta(START_TIME_DELTA)
 
-            await expect(tieredSale.connect(user).whitelistedPurchaseInTierWithCode(tierId, amount, [], invalidPromo, 5)).to.be.revertedWith('Invalid promo code')
+            await expect(tieredSale.connect(user).whitelistedPurchaseInTier(tierId, amount, [], 5, invalidPromo, ethers.constants.AddressZero)).to.be.revertedWith('Invalid promo code')
         })
         it('should allow a purchase that exactly matches the wallet allocation', async function () {
             const maxAllocation = 5
             await tieredSale.connect(deployer).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    tierId: tierId,
-                    price: ethers.utils.parseEther('1'),
-                    maxTotalPurchasable: 1000,
-                    maxAllocationPerWallet: maxAllocation,
-                }))
-        
+                ...defaultTierSettings,
+                tierId: tierId,
+                price: ethers.utils.parseEther('1'),
+                maxTotalPurchasable: 1000,
+                maxAllocationPerWallet: maxAllocation,
+            }))
+
             await paymentToken.connect(user).approve(tieredSale.address, ethers.utils.parseEther(maxAllocation.toString()))
             mineTimeDelta(START_TIME_DELTA)
-            await tieredSale.connect(user).whitelistedPurchaseInTier(tierId, maxAllocation, [],  maxAllocation)
-        
+            await tieredSale.connect(user).whitelistedPurchaseInTier(tierId, maxAllocation, [], maxAllocation, '', ethers.constants.AddressZero)
+
             const purchasedAmount = await tieredSale.purchasedAmountPerTier(tierId, user.getAddress())
             expect(purchasedAmount).to.equal(maxAllocation)
         })
         it('should prevent and allow purchases when tier is halted and resumed', async function () {
             await tieredSale.connect(deployer).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    tierId: tierId,
-                    isHalt: true,
-                }))
+                ...defaultTierSettings,
+                tierId: tierId,
+                isHalt: true,
+            }))
 
             await paymentToken.connect(user).approve(tieredSale.address, ethers.utils.parseEther('1'))
 
             mineTimeDelta(START_TIME_DELTA)
-        
+
             // Attempt to purchase in a halted tier
-            await expect(tieredSale.connect(user).whitelistedPurchaseInTier(tierId, 1, [], 10))
-                .to.be.revertedWith('Purchases in this tier are currently halted')
-        
+            await expect(tieredSale.connect(user).whitelistedPurchaseInTier(tierId, 1, [], 10, '', ethers.constants.AddressZero))
+                .to.be.revertedWith('Tier is halted')
+
             // Resume the tier
             await tieredSale.connect(operator).updateIsHalt(tierId, false)
-        
+
             // Attempt purchase again
-            await tieredSale.connect(user).whitelistedPurchaseInTier(tierId, 1, [], 10)
+            await tieredSale.connect(user).whitelistedPurchaseInTier(tierId, 1, [], 10, '', ethers.constants.AddressZero)
             const purchasedAmount = await tieredSale.purchasedAmountPerTier(tierId, user.getAddress())
             expect(purchasedAmount).to.equal(1)
         })
@@ -487,31 +558,31 @@ describe('TieredSale Contract', function () {
             const bonusPercentage = 5
             const tierId = 'sale1'
             const purchaseAmount = 3 // 3 ETH
-        
+
             await tieredSale.connect(deployer).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    tierId: tierId,
-                    bonusPercentage: bonusPercentage,
-                }))
+                ...defaultTierSettings,
+                tierId: tierId,
+                bonusPercentage: bonusPercentage,
+            }))
             const promoCode = 'DEAL10'
             const discount = 10 // 10% discount
-        
+
             // Add a promo code
             await tieredSale.connect(operator).addPromoCode(promoCode, discount, referrer.address, operator.address, 0, 0)
-        
+
             // Approve token amount
             await paymentToken.connect(user).approve(tieredSale.address, ethers.utils.parseEther('100'))
 
             mineTimeDelta(START_TIME_DELTA)
-        
+
             // Purchase with a promo code
-            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(tierId, purchaseAmount, [], promoCode, 10)
-        
+            await tieredSale.connect(user).whitelistedPurchaseInTier(tierId, purchaseAmount, [], 10, promoCode, ethers.constants.AddressZero)
+
             // Calculate expected earnings
             const discountedPrice = price.mul(100 - discount).div(100).mul(purchaseAmount)
             const baseEarnings = discountedPrice.mul(8).div(100) // 8% base owner earnings
             const bonusEarnings = discountedPrice.mul(bonusPercentage).div(100) // bonus
-        
+
             const promo = await tieredSale.promoCodes(promoCode)
             expect(promo.promoCodeOwnerEarnings).to.equal(baseEarnings.add(bonusEarnings))
         })
@@ -519,34 +590,55 @@ describe('TieredSale Contract', function () {
             const bonusPercentage = 5
             const tierId = 'addressPromoSale'
             const purchaseAmount = 3 // 3 ETH
-        
+
             await tieredSale.connect(deployer).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    tierId: tierId,
-                    bonusPercentage: bonusPercentage,
-                }))
+                ...defaultTierSettings,
+                tierId: tierId,
+                bonusPercentage: bonusPercentage,
+            }))
             const promoCode = referrer.address
             const discount = await tieredSale.connect(user).addressPromoCodeDiscountPercentage() // discount for address promo code
             const referralBonus = await tieredSale.connect(user).addressPromoCodePercentage() // referral bonus for address promo code
-        
+
             // Approve token amount
             await paymentToken.connect(user).approve(tieredSale.address, ethers.utils.parseEther('100'))
             await paymentToken.connect(referrer).approve(tieredSale.address, ethers.utils.parseEther('100'))
 
             mineTimeDelta(START_TIME_DELTA)
-        
-            // Purchase with a promo code
-            await expect(tieredSale.connect(user).whitelistedPurchaseInTierWithWalletCode(tierId, purchaseAmount, [], promoCode, 10)).to.be.revertedWith('Promo code address has not purchased a node')
-            await expect(tieredSale.connect(referrer).whitelistedPurchaseInTierWithWalletCode(tierId, 1, [], promoCode, 10)).to.be.revertedWith('Cannot purchase with own wallet address promo code')
-            await tieredSale.connect(referrer).whitelistedPurchaseInTier(tierId, 1, [], 10)
-            mineNext()
-            await tieredSale.connect(user).whitelistedPurchaseInTierWithWalletCode(tierId, purchaseAmount, [], promoCode, 10)
 
-        
+            // Purchase with a promo code
+            await expect(tieredSale.connect(user).whitelistedPurchaseInTier(
+                tierId,
+                purchaseAmount,
+                [],
+                10,
+                '',
+                promoCode,
+            )).to.be.revertedWith('Unactivated wallet code')
+            await expect(tieredSale.connect(referrer).whitelistedPurchaseInTier(
+                tierId,
+                1,
+                [],
+                10,
+                '',
+                promoCode,
+            )).to.be.revertedWith('Cannot use own wallet code')
+            await tieredSale.connect(referrer).whitelistedPurchaseInTier(tierId, 1, [], 10, '', ethers.constants.AddressZero)
+            mineNext()
+            await tieredSale.connect(user).whitelistedPurchaseInTier(
+                tierId,
+                purchaseAmount,
+                [],
+                10,
+                '',
+                promoCode,
+            )
+
+
             // Calculate expected earnings
             const discountedPrice = price.mul(purchaseAmount).mul(100 - discount).div(100)
             const earnings = discountedPrice.mul(referralBonus).div(100)
-        
+
             const promo = await tieredSale.promoCodes(promoCode.toLowerCase())
             expect(promo.promoCodeOwnerEarnings).to.equal(earnings)
         })
@@ -557,12 +649,12 @@ describe('TieredSale Contract', function () {
         const bonusPercentage = 5
         this.beforeEach(async function () {
             await tieredSale.connect(operator).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    tierId: promoCodeTier,
-                    allowPromoCode: true,
-                    bonusPercentage: bonusPercentage,
-                    price: ethers.utils.parseEther('1'),
-                }))
+                ...defaultTierSettings,
+                tierId: promoCodeTier,
+                allowPromoCode: true,
+                bonusPercentage: bonusPercentage,
+                price: ethers.utils.parseEther('1'),
+            }))
             await tieredSale.connect(operator).updateClaimRewardsEnabled(true).then((tx: { wait: () => any }) => tx.wait())
         })
         it('should correctly retrieve promo code information within a valid range', async function () {
@@ -571,14 +663,14 @@ describe('TieredSale Contract', function () {
             for (const code of codes) {
                 await tieredSale.connect(operator).addPromoCode(code, 10, referrer.address, operator.address, 0, 0)
             }
-    
+
             // Retrieve and verify promo code information for the first two codes
             const promoInfo = await tieredSale.getAllPromoCodeInfo(0, 2)
             expect(promoInfo.length).to.equal(2)
             expect(promoInfo[0].promoCodeOwnerAddress).to.equal(referrer.address)
             expect(promoInfo[1].promoCodeOwnerAddress).to.equal(referrer.address)
         })
-    
+
         it('should revert when trying to retrieve promo code information for invalid range', async function () {
             // Attempt to retrieve promo code information with invalid range
             await expect(tieredSale.getAllPromoCodeInfo(2, 1)).to.be.revertedWith('Invalid range')
@@ -591,7 +683,7 @@ describe('TieredSale Contract', function () {
             const codes = ['PROMO10', 'PROMO20', 'PROMO30']
             const discounts = [10, 20, 30]
             const users = [user, referrer, operator] // Using different users for purchases
-    
+
             // Setup promo codes
             for (let i = 0; i < codes.length; i++) {
                 await tieredSale.connect(deployer).addPromoCode(codes[i], discounts[i], users[i].address, deployer.address, 0, 0)
@@ -599,18 +691,19 @@ describe('TieredSale Contract', function () {
             }
 
             mineTimeDelta(START_TIME_DELTA)
-    
+
             // Execute purchases with each promo code
             for (let i = 0; i < codes.length; i++) {
-                await tieredSale.connect(users[i]).whitelistedPurchaseInTierWithCode(
+                await tieredSale.connect(users[i]).whitelistedPurchaseInTier(
                     promoCodeTier,
                     10,
                     [],
+                    100,
                     codes[i],
-                    100
+                    ethers.constants.AddressZero,
                 )
             }
-    
+
             // Verify correct reward allocation and token balances after purchases
             for (let i = 0; i < codes.length; i++) {
                 const promo = await tieredSale.promoCodes(codes[i])
@@ -628,31 +721,31 @@ describe('TieredSale Contract', function () {
             const allocationAmount = 200
             // Setup a promo code and simulate a purchase to generate rewards
             await tieredSale.connect(operator).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    allowPromoCode: true,
-                    maxAllocationPerWallet: allocationAmount,
-                }))
+                ...defaultTierSettings,
+                allowPromoCode: true,
+                maxAllocationPerWallet: allocationAmount,
+            }))
             await tieredSale.connect(operator).addPromoCode('REWARD20', 5, referrer.address, operator.address, 0, 0)
             await paymentToken.connect(user).approve(tieredSale.address, ethers.utils.parseEther(allocationAmount.toString())).then((tx: { wait: () => any }) => tx.wait())
 
             mineTimeDelta(START_TIME_DELTA)
 
-            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(tierId, 5, [], 'REWARD20', allocationAmount)
-    
+            await tieredSale.connect(user).whitelistedPurchaseInTier(tierId, 5, [], allocationAmount, 'REWARD20', ethers.constants.AddressZero)
+
             // Withdraw rewards
             const initialBalance = await paymentToken.balanceOf(referrer.address)
             await tieredSale.connect(referrer).withdrawAllPromoCodeRewards()
             const finalBalance = await paymentToken.balanceOf(referrer.address)
-    
+
             // Verify that the balance has increased by the expected reward amount
             expect(finalBalance.sub(initialBalance)).to.be.above(0)
         })
-    
+
         it('should revert if there are no rewards to withdraw', async function () {
             await tieredSale.connect(operator).updateClaimRewardsEnabled(true).then((tx: { wait: () => any }) => tx.wait())
             // Attempt to withdraw with no rewards
             await expect(tieredSale.connect(user).withdrawAllPromoCodeRewards())
-                .to.be.revertedWith('No rewards available')
+                .to.be.revertedWith('No reward')
         })
     })
     describe('tiered sale: sales time', function () {
@@ -664,32 +757,34 @@ describe('TieredSale Contract', function () {
                 startTime: currentTime + 300, // starts 5 minutes after startTime
                 endTime: currentTime + 600,  // ends 10 minutes after startTime
             }
-    
+
             await tieredSale.connect(operator).setTier(...await prepareTierArgs(shortLivedTier))
             await tieredSale.connect(operator).addPromoCode(promoCode, 5, referrer.address, operator.address, 0, 0)
-    
+
             // Attempt to purchase before the tier starts
             await expect(
-                tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+                tieredSale.connect(user).whitelistedPurchaseInTier(
                     shortLivedTier.tierId,
                     1,
                     [],
+                    10,
                     promoCode,
-                    10
+                    ethers.constants.AddressZero,
                 )
             ).to.be.revertedWith('Tier is not active')
-    
+
             // Fast forward time to after the end time
             mineTimeDelta(shortLivedTier.endTime - currentTime + 1)
-    
+
             // Attempt to purchase after the tier ends
             await expect(
-                tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+                tieredSale.connect(user).whitelistedPurchaseInTier(
                     shortLivedTier.tierId,
                     1,
                     [],
+                    10,
                     promoCode,
-                    10
+                    ethers.constants.AddressZero,
                 )
             ).to.be.revertedWith('Tier is not active')
         })
@@ -707,16 +802,16 @@ describe('TieredSale Contract', function () {
             const price = ethers.utils.parseEther('1')
             const allocationAmount = 100
             await tieredSale.connect(operator).setTier(...await prepareTierArgs({
-                    ...defaultTierSettings,
-                    tierId: tierId,
-                    price: price,
-                    maxTotalPurchasable: allocationAmount,
-                    maxAllocationPerWallet: allocationAmount,
-                }))
+                ...defaultTierSettings,
+                tierId: tierId,
+                price: price,
+                maxTotalPurchasable: allocationAmount,
+                maxAllocationPerWallet: allocationAmount,
+            }))
             await tieredSale.connect(operator).addPromoCode(promoCode, discount, referrer.address, operator.address, baseOwnerPercentageOverride, masterOwnerPercentageOverride)
             await paymentToken.connect(user).approve(tieredSale.address, ethers.utils.parseEther(allocationAmount.toString()))
             mineTimeDelta(START_TIME_DELTA)
-            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(tierId, amount, [], promoCode, allocationAmount)
+            await tieredSale.connect(user).whitelistedPurchaseInTier(tierId, amount, [], allocationAmount, promoCode, ethers.constants.AddressZero)
             const promo = await tieredSale.promoCodes(promoCode)
             console.log('allocationAmount', allocationAmount)
             const discountedPayment = price.mul(100 - discount).div(100).mul(amount)
@@ -725,5 +820,159 @@ describe('TieredSale Contract', function () {
             const expectedMasterOwnerReward = discountedPayment.mul(masterOwnerPercentageOverride).div(100)
             expect(promo.masterOwnerEarnings).to.equal(expectedMasterOwnerReward)
         })
+    })
+
+    describe('tiered sale: purchasing with signature', function () {
+        const price = ethers.utils.parseEther('0.3')
+        const maxPurchasePerWallet = 10
+        const allocatedPaymentAmount = price.mul(maxPurchasePerWallet)
+
+        this.beforeEach(async function () {
+            await tieredSale.connect(operator).setTier(...await prepareTierArgs({
+                ...defaultTierSettings,
+                price: price,
+                requireSignature: true,
+            })).then((tx: { wait: () => any }) => tx.wait())
+
+            await paymentToken.connect(user).approve(tieredSale.address, price.mul(maxPurchasePerWallet)).then((tx: { wait: () => any }) => tx.wait())
+            await paymentToken.connect(referrer).approve(tieredSale.address, price.mul(maxPurchasePerWallet)).then((tx: { wait: () => any }) => tx.wait())
+            mineTimeDelta(START_TIME_DELTA)
+        })
+
+        it('should allow purchasing in with signature', async function () {
+            // Create the message hash
+            const messageHash = ethers.utils.solidityKeccak256(
+                ['address', 'uint', 'address', 'string', 'uint256'],
+                [user.address, hre.network.config.chainId, tieredSale.address, tierId, allocatedPaymentAmount]
+            )
+
+            // Sign the message hash
+            const signature = await operator.signMessage(ethers.utils.arrayify(messageHash))
+            await tieredSale.connect(user).signedPurchaseInTierWithCode(
+                tierId,
+                maxPurchasePerWallet,
+                allocatedPaymentAmount,
+                signature,
+                '',
+                ethers.constants.AddressZero,
+            )
+            expect(await tieredSale.purchasedAmountPerTier(tierId, user.address)).to.equal(maxPurchasePerWallet)
+        })
+        it('should reject purchasing in with invalid signature', async function () {
+            // invalid signer
+            let messageHash = ethers.utils.solidityKeccak256(
+                ['address', 'uint', 'address', 'string', 'uint256'],
+                [user.address, hre.network.config.chainId, tieredSale.address, tierId, allocatedPaymentAmount]
+            )
+            let signature = await user.signMessage(ethers.utils.arrayify(messageHash))
+            expect(tieredSale.connect(user).signedPurchaseInTierWithCode(
+                tierId,
+                maxPurchasePerWallet,
+                allocatedPaymentAmount,
+                signature,
+                '',
+                ethers.constants.AddressZero,
+            )).to.be.revertedWith('Invalid signature')
+
+            // invalid allocation
+            messageHash = ethers.utils.solidityKeccak256(
+                ['address', 'uint', 'address', 'string', 'uint256'],
+                [user.address, hre.network.config.chainId, tieredSale.address, tierId, allocatedPaymentAmount.sub(1)]
+            )
+
+            signature = await operator.signMessage(ethers.utils.arrayify(messageHash))
+            expect(tieredSale.connect(user).signedPurchaseInTierWithCode(
+                tierId,
+                maxPurchasePerWallet,
+                allocatedPaymentAmount,
+                signature,
+                '',
+                ethers.constants.AddressZero,
+            )).to.be.revertedWith('Invalid signature')
+        })
+
+        it('should handle signature purchases with promo code and wallet promo code correctly', async function () {
+            const purchaseAmount = 5
+            const promoCode = 'SIGPROMO'
+            const discount = 10
+            const walletPromoAddress = referrer.address
+
+            // Add regular promo code
+            await tieredSale.connect(operator).addPromoCode(
+                promoCode,
+                discount,
+                referrer.address,
+                operator.address,
+                0,
+                0
+            )
+
+            // Create message hash for signature
+            const messageHash = ethers.utils.solidityKeccak256(
+                ['address', 'uint', 'address', 'string', 'uint256'],
+                [user.address, hre.network.config.chainId, tieredSale.address, tierId, allocatedPaymentAmount]
+            )
+
+            // Sign the message hash with operator
+            const signature = await operator.signMessage(ethers.utils.arrayify(messageHash))
+
+            // Test with regular promo code
+            await tieredSale.connect(user).signedPurchaseInTierWithCode(
+                tierId,
+                purchaseAmount,
+                allocatedPaymentAmount,
+                signature,
+                promoCode,
+                ethers.constants.AddressZero
+            )
+
+            // Verify purchase with promo code
+            expect(await tieredSale.purchasedAmountPerTier(tierId, user.address))
+                .to.equal(purchaseAmount)
+
+
+            // Create message hash for signature
+            const referrerMessageHash = ethers.utils.solidityKeccak256(
+                ['address', 'uint', 'address', 'string', 'uint256'],
+                [referrer.address, hre.network.config.chainId, tieredSale.address, tierId, allocatedPaymentAmount]
+            )
+
+            // Sign the message hash with operator
+            const referrerSignature = await operator.signMessage(ethers.utils.arrayify(referrerMessageHash))
+            // Activate wallet promo code by having referrer make a purchase
+            await tieredSale.connect(referrer).signedPurchaseInTierWithCode(
+                tierId,
+                1,
+                allocatedPaymentAmount,
+                referrerSignature,
+                '',
+                ethers.constants.AddressZero
+            )
+
+            // Test with wallet promo code
+            await tieredSale.connect(user).signedPurchaseInTierWithCode(
+                tierId,
+                purchaseAmount,
+                allocatedPaymentAmount,
+                signature,
+                '',
+                walletPromoAddress
+            )
+
+            // Verify total purchases
+            expect(await tieredSale.purchasedAmountPerTier(tierId, user.address))
+                .to.equal(purchaseAmount * 2)
+
+            mineNext()
+
+            // Verify promo code rewards were recorded
+            const promoInfo = await tieredSale.promoCodes(promoCode)
+            const walletPromoInfo = await tieredSale.promoCodes(walletPromoAddress.toLowerCase())
+
+
+            expect(promoInfo.promoCodeOwnerEarnings).to.be.gt(0)
+            expect(walletPromoInfo.promoCodeOwnerEarnings).to.be.gt(0)
+        })
+
     })
 })
