@@ -1,3 +1,4 @@
+import hre from 'hardhat'
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { BigNumber, Contract } from 'ethers'
@@ -841,8 +842,8 @@ describe('TieredSale Contract', function () {
         it('should allow purchasing in with signature', async function () {
             // Create the message hash
             const messageHash = ethers.utils.solidityKeccak256(
-                ['address', 'address', 'string', 'uint256'],
-                [user.address, tieredSale.address, tierId, allocatedPaymentAmount]
+                ['address', 'uint', 'address', 'string', 'uint256'],
+                [user.address, hre.network.config.chainId, tieredSale.address, tierId, allocatedPaymentAmount]
             )
 
             // Sign the message hash
@@ -860,8 +861,8 @@ describe('TieredSale Contract', function () {
         it('should reject purchasing in with invalid signature', async function () {
             // invalid signer
             let messageHash = ethers.utils.solidityKeccak256(
-                ['address', 'address', 'string', 'uint256'],
-                [user.address, tieredSale.address, tierId, allocatedPaymentAmount]
+                ['address', 'uint', 'address', 'string', 'uint256'],
+                [user.address, hre.network.config.chainId, tieredSale.address, tierId, allocatedPaymentAmount]
             )
             let signature = await user.signMessage(ethers.utils.arrayify(messageHash))
             expect(tieredSale.connect(user).signedPurchaseInTierWithCode(
@@ -875,8 +876,8 @@ describe('TieredSale Contract', function () {
 
             // invalid allocation
             messageHash = ethers.utils.solidityKeccak256(
-                ['address', 'address', 'string', 'uint256'],
-                [user.address, tieredSale.address, tierId, allocatedPaymentAmount.sub(1)]
+                ['address', 'uint', 'address', 'string', 'uint256'],
+                [user.address, hre.network.config.chainId, tieredSale.address, tierId, allocatedPaymentAmount.sub(1)]
             )
 
             signature = await operator.signMessage(ethers.utils.arrayify(messageHash))
@@ -908,8 +909,8 @@ describe('TieredSale Contract', function () {
 
             // Create message hash for signature
             const messageHash = ethers.utils.solidityKeccak256(
-                ['address', 'address', 'string', 'uint256'],
-                [user.address, tieredSale.address, tierId, allocatedPaymentAmount]
+                ['address', 'uint', 'address', 'string', 'uint256'],
+                [user.address, hre.network.config.chainId, tieredSale.address, tierId, allocatedPaymentAmount]
             )
 
             // Sign the message hash with operator
@@ -932,8 +933,8 @@ describe('TieredSale Contract', function () {
 
             // Create message hash for signature
             const referrerMessageHash = ethers.utils.solidityKeccak256(
-                ['address', 'address', 'string', 'uint256'],
-                [referrer.address, tieredSale.address, tierId, allocatedPaymentAmount]
+                ['address', 'uint', 'address', 'string', 'uint256'],
+                [referrer.address, hre.network.config.chainId, tieredSale.address, tierId, allocatedPaymentAmount]
             )
 
             // Sign the message hash with operator
