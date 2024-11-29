@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "./IFFundable.sol";
 
 // Contract to manage tiered sales with promotional codes and whitelisting.
-contract IFTieredSaleV2 is IFFundable, AccessControl {
+contract IFTieredSale is IFFundable, AccessControl {
     using SafeERC20 for ERC20;
 
     ERC20 public paymentToken;
@@ -59,6 +59,7 @@ contract IFTieredSaleV2 is IFFundable, AccessControl {
         uint256 startTime;  // Start time for this tier.
         uint256 endTime;  // End time for this tier.
         bool requireSignature;  // Require signature for public sale or not
+        bool useMaxPaymentReceived;  // Use MaxPaymentReceivedPerUser to check
     }
 
     struct PromoCode {
@@ -279,11 +280,11 @@ contract IFTieredSaleV2 is IFFundable, AccessControl {
     function limitedPurchaseInTierWithCode(
         string memory _tierId,
         uint256 _amount,
-        uint256 allocatedPayment,
         string memory _promoCode,
         address _walletPromoCode
     ) public {
         require(tiers[_tierId].requireSignature, "Use whitelisted purchase");
+        require(maxPaymentReceivedPerUser > 0, "Can't use limitedPurchase");
 
         require((bytes(_promoCode).length == 0 || _walletPromoCode == address(0)), "One promo code only");
         bool isRegularPromoCode = true;
