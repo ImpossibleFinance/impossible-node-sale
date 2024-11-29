@@ -27,7 +27,7 @@ module.exports = {
       {
         version: '0.8.9',
         settings: {
-          optimizer: { 
+          optimizer: {
             enabled: true,
             runs: 200,
           },
@@ -36,10 +36,11 @@ module.exports = {
       {
         version: '0.8.17',
         settings: {
-          optimizer: { 
+          optimizer: {
             enabled: true,
-            runs: 200,
+            runs: 100,
           },
+          viaIR: true,
         },
       },
     ]
@@ -50,7 +51,45 @@ module.exports = {
       kovan: process.env.ETHERSCAN_API_KEY,
       bscTestnet: process.env.BSCSCAN_API_KEY,
       arbitrumOne: process.env.ARBISCAN_API_KEY,
+      arbitrum_sepolia: process.env.ARBISCAN_API_KEY,
+      base_sepolia: process.env.BASE_SEPOLIA_API_KEY,
+      base: process.env.BASE_SEPOLIA_API_KEY,
     },
+    customChains: [
+      {
+        network: 'arbitrumOne',
+        chainId: 42161,
+        urls: {
+          apiURL: 'https://api.arbiscan.io/api',
+        }
+      },
+      {
+        network: 'arbitrum_sepolia',
+        chainId: 421614,
+        urls: {
+          apiURL: 'https://api-sepolia.arbiscan.io/api',
+        }
+      },
+      {
+        network: 'base_sepolia',
+        chainId: 84532,
+        urls: {
+          apiURL: 'https://api-sepolia.basescan.org/api',
+        }
+      },
+      {
+        network: 'base',
+        chainId: 8453,
+        urls: {
+          apiURL: 'https://api.basescan.org/api',
+        }
+      }
+    ]
+  },
+  sourcify: {
+    // Disabled by default
+    // Doesn't need an API key
+    enabled: true
   },
   networks: {
     zksolc: {
@@ -87,14 +126,12 @@ module.exports = {
           mnemonic: process.env.MAINNET_MNEMONIC || '',
         },
       },
+      allowUnlimitedContractSize: true,
     },
     arbitrumOne: {
       url: 'https://arb1.arbitrum.io/rpc',
       chainId: 42161,
-      gasPrice: 11000000000,
-      accounts: {
-        mnemonic: process.env.MAINNET_MNEMONIC || '',
-      },
+      accounts: [process.env.MAINNET_MNEMONIC || ''],
     },
     bsc_test: {
       url: 'https://bsc-testnet-rpc.publicnode.com',
@@ -189,6 +226,21 @@ module.exports = {
       accounts: {
         mnemonic: process.env.MAINNET_MNEMONIC || '',
       },
+    },
+    arbitrum_sepolia: {
+      url: 'https://arbitrum-sepolia.blockpi.network/v1/rpc/public',
+      chainId: 421614,
+      accounts: [process.env.MAINNET_MNEMONIC || ''],
+    },
+    base: {
+      url: 'https://base.llamarpc.com',
+      chainId: 8453,
+      accounts: [process.env.MAINNET_MNEMONIC || ''],
+    },
+    base_sepolia: {
+      url: 'https://sepolia.base.org',
+      chainId: 84532,
+      accounts: [process.env.MAINNET_MNEMONIC || ''],
     },
     linea_goerili: {
       url: 'https://rpc.goerli.linea.build',
