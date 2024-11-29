@@ -1,6 +1,9 @@
+#!/bin/bash
+
 CONTRACT_NAME=$1
 CONTRACT_VERSION=$2
 COMPILER_VERSION="0.8.17"
+OPTIMIZATION_RUNS=100  # Define optimization runs variable
 
 if [ -z "$CONTRACT_NAME" ] || [ -z "$CONTRACT_VERSION" ]; then
   echo "Usage: $0 <CONTRACT_NAME> <CONTRACT_VERSION>"
@@ -13,21 +16,43 @@ OUTPUT_CONTRACT="${CONTRACT_NAME}${CONTRACT_VERSION}"
 cp contracts/${CONTRACT_NAME}.sol contracts/${OUTPUT_CONTRACT}.sol
 
 # Replace "contract <CONTRACT_NAME>" with "contract <OUTPUT_CONTRACT>" in the generated file
-# e.g. contract MyContract -> contract MyContractV1
-sed -i "s/contract $CONTRACT_NAME/contract $OUTPUT_CONTRACT/" contracts/${OUTPUT_CONTRACT}.sol
+sed -i "" "s/contract ${CONTRACT_NAME}/contract ${OUTPUT_CONTRACT}/" "contracts/${OUTPUT_CONTRACT}.sol"
 
-# export abi and flatten contract
+# Export ABI and flatten contract
 npx hardhat export-abi
 echo "Contract $OUTPUT_CONTRACT ABI exported successfully"
 
-npx hardhat flatten contracts/${OUTPUT_CONTRACT}.sol > resources/flattened/${OUTPUT_CONTRACT}.sol
-sed -i '/SPDX-License-Identifier/d' resources/flattened/${OUTPUT_CONTRACT}.sol  # remove SPDX-License-Identifier
-sed -i '1s/^/\/\/ SPDX-License-Identifier: MIT\n/' resources/flattened/${OUTPUT_CONTRACT}.sol  # add MIT license
+# Flatten contract
+FLATTENED_CONTRACT_PATH="resources/flattened/${OUTPUT_CONTRACT}.sol"
+npx hardhat flatten contracts/${OUTPUT_CONTRACT}.sol > $FLATTENED_CONTRACT_PATH
+
+# Add SPDX License Identifier
+sed -i.bak '/SPDX-License-Identifier/d' $FLATTENED_CONTRACT_PATH
+sed -i.bak '1s/^/\/\/ SPDX-License-Identifier: MIT\n/' $FLATTENED_CONTRACT_PATH
+
+# Add Solidity version and optimization runs to the top of the flattened contract
+sed -i.bak "2i\\
+// Solidity Compiler Version: ${COMPILER_VERSION}
+" "$FLATTENED_CONTRACT_PATH" && rm "${FLATTENED_CONTRACT_PATH}.bak"
+
+sed -i.bak "3i\\
+// Optimization Runs: ${OPTIMIZATION_RUNS}
+" "$FLATTENED_CONTRACT_PATH" && rm "${FLATTENED_CONTRACT_PATH}.bak"
+
 
 echo "Contract $OUTPUT_CONTRACT flattened successfully"
+echo "Flattened contract stored at: $FLATTENED_CONTRACT_PATH"
 
 echo "Compiling contract $OUTPUT_CONTRACT with version $COMPILER_VERSION"
-# compile contract
-docker run -v $PWD:/sources ethereum/solc:$COMPILER_VERSION --ir-optimized --optimize --optimize-runs=200 --bin /sources/contracts/${OUTPUT_CONTRACT}.sol --include-path /sources/node_modules/ --base-path /sources -o /sources/${OUTPUT_CONTRACT}.bin --overwrite
+# Compile contract
+docker run -v $PWD:/sources ethereum/solc:$COMPILER_VERSION --via-ir --ir-optimized --optimize --optimize-runs=$OPTIMIZATION_RUNS --bin /sources/contracts/${OUTPUT_CONTRACT}.sol --include-path /sources/node_modules/ --base-path /sources -o /sources/${OUTPUT_CONTRACT}.bin --overwrite
 
-abigen --abi=abi/contracts/${OUTPUT_CONTRACT}.sol/${OUTPUT_CONTRACT}.json --pkg=${OUTPUT_CONTRACT} --out=./resources/go-file/${OUTPUT_CONTRACT}.go --bin ${OUTPUT_CONTRACT}.bin/${OUTPUT_CONTRACT}.bin
+# Convert OUTPUT_CONTRACT to start with lowercase for Go file to match the backend convention
+OUTPUT_CONTRACT_LOWERCASE="$(echo "${OUTPUT_CONTRACT}" | sed 's/^\(.\)/\L\1/')"
+GO_FILE_PATH="./resources/go-file/${OUTPUT_CONTRACT_LOWERCASE}.go"
+
+# Generate Go file from ABI and binary
+abigen --abi=abi/contracts/${OUTPUT_CONTRACT}.sol/${OUTPUT_CONTRACT}.json --pkg=${OUTPUT_CONTRACT_LOWERCASE} --out=$GO_FILE_PATH --bin ${OUTPUT_CONTRACT}.bin/${OUTPUT_CONTRACT}.bin
+
+echo "Go file generated successfully"
+echo "Go file stored at: $GO_FILE_PATH"
