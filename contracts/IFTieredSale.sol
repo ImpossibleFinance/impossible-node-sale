@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "./IFFundable.sol";
 
 // Contract to manage tiered sales with promotional codes and whitelisting.
-contract IFTieredSale is IFFundable, AccessControl {
+contract IFTieredSaleV2 is IFFundable, AccessControl {
     using SafeERC20 for ERC20;
 
     ERC20 public paymentToken;
@@ -20,6 +20,8 @@ contract IFTieredSale is IFFundable, AccessControl {
     mapping(string => Tier) public tiers;
     mapping(string => mapping(address => uint256)) public purchasedAmountPerTier; // tierId => address => amount in ether
     mapping(address => uint256) public paymentReceivedFromUser; // address => amount of payment token in wei
+    uint256 public maxPaymentReceivedPerUser;
+
     mapping(string => uint256) public codePurchaseAmount; // promo code => total purchased amount in ether
     mapping(string => uint256) public saleTokenPurchasedByTier; // tierId => total purchased amount in ether
     mapping(string => PromoCode) public promoCodes;
@@ -272,6 +274,47 @@ contract IFTieredSale is IFFundable, AccessControl {
         }
 
         executePurchase(_tierId, _amount, price, finalPromoCode);
+    }
+
+    function limitedPurchaseInTierWithCode(
+        string memory _tierId,
+        uint256 _amount,
+        uint256 allocatedPayment,
+        string memory _promoCode,
+        address _walletPromoCode
+    ) public {
+        require(tiers[_tierId].requireSignature, "Use whitelisted purchase");
+
+        require((bytes(_promoCode).length == 0 || _walletPromoCode == address(0)), "One promo code only");
+        bool isRegularPromoCode = true;
+        string memory promoCode;
+
+        if (bytes(_promoCode).length != 0) {
+            require(tiers[_tierId].allowPromoCode, "Promo code not allowed");
+            _validatePromoCode(_promoCode);
+            promoCode = _promoCode;
+        }
+        if (_walletPromoCode != address(0)) {
+            require(tiers[_tierId].allowWalletPromoCode, "Wallet promo code not allowed");
+            require(msg.sender != _walletPromoCode, "Cannot use own wallet code");
+            require(validateWalletPromoCode(_walletPromoCode), "Unactivated wallet code");
+            promoCode = addressToString(_walletPromoCode);
+            isRegularPromoCode = false;
+        }
+
+        uint256 price = tiers[_tierId].price;
+
+        if (bytes(promoCode).length != 0) {
+            uint8 discount = calculateDiscount(promoCode);
+            price = price * (100 - discount) / 100;  // in gwei
+            if (isRegularPromoCode) {
+                _updatePromoCodeRewards(_promoCode, price * _amount, _tierId);
+            } else {
+                _updateWalletPromoCodeRewards(_walletPromoCode, price * _amount);
+            }
+        }
+        require(paymentReceivedFromUser[msg.sender] + (_amount * price) <= maxPaymentReceivedPerUser, "Purchase exceeds max payment received");
+        executePurchase(_tierId, _amount, price, promoCode);
     }
 
     /// Allows a user to purchase tokens in a specific tier of a tiered sale, using a signed purchase request.
@@ -548,6 +591,10 @@ contract IFTieredSale is IFFundable, AccessControl {
         claimRewardsEnabled = _claimRewardsEnabled;
     }
 
+    function updateMaxPaymentReceivedPerUser(uint256 _maxPaymentReceived) external onlyOperator {
+        maxPaymentReceivedPerUser = _maxPaymentReceived;
+    }
+
     // owner only ops functions
     function updateRewards(uint8 _baseOwnerPercentage, uint8 _masterOwnerPercentage) external onlyOwner {
         require(_baseOwnerPercentage <= MAX_BASE_OWNER_PERCENTAGE, "Invalid base owner percentage");
@@ -580,7 +627,7 @@ contract IFTieredSale is IFFundable, AccessControl {
                break;
            }
        }
-       require(codeExists, "Promo code does not exist");
+       require(codeExists, "Code not found");
        
        // ok to update address promo code
        _validatePromoCodeSetting(_code, _discountPercentage, _promoCodeOwnerAddress, _masterOwnerAddress, _baseOwnerPercentageOverride, _masterOwnerPercentageOverride);
