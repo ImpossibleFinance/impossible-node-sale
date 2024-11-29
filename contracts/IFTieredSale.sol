@@ -59,7 +59,6 @@ contract IFTieredSale is IFFundable, AccessControl {
         uint256 startTime;  // Start time for this tier.
         uint256 endTime;  // End time for this tier.
         bool requireSignature;  // Require signature for public sale or not
-        bool useMaxPaymentReceived;  // Use MaxPaymentReceivedPerUser to check
     }
 
     struct PromoCode {
