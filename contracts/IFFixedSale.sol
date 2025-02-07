@@ -59,11 +59,11 @@ contract IFFixedSale is IFSale {
 
     // --- DISABLED FUNCTIONS
 
-    function purchase(uint256) virtual override public {
+    function purchase(uint256) virtual override public payable {
         revert("Use whitelistedPurchase(uint256 paymentAmount, bytes32[] calldata merkleProof, uint256 allocation)");
     }
 
-    function whitelistedPurchase(uint256, bytes32[] calldata) override public pure {
+    function whitelistedPurchase(uint256, bytes32[] calldata) override public payable {
         revert("Use whitelistedPurchase(uint256 paymentAmount, bytes32[] calldata merkleProof, uint256 allocation)");
     }
 

@@ -4,12 +4,11 @@ pragma solidity ^0.8.17;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "./IFFundable.sol";
 
 // Contract to manage tiered sales with promotional codes and whitelisting.
-contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
+contract IFTieredSale is AccessControl, IFFundable {
     using SafeERC20 for ERC20;
 
     ERC20 public paymentToken;
@@ -245,7 +244,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         bytes32[] calldata _merkleProof,
         address _walletPromoCode,
         uint256 _allocation
-    ) public {
+    ) public payable {
         // Ensure promo codes are allowed for the tier and the promo code is valid
         require(tiers[_tierId].allowWalletPromoCode, "Promo code is not allowed for this tier");
         require(msg.sender != _walletPromoCode, "Cannot purchase with own wallet address promo code");
@@ -282,7 +281,7 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         uint256 _amount,
         bytes32[] calldata _merkleProof,
         uint256 _allocation
-    ) public {
+    ) public payable {
         bytes32 tierWhitelistRootHash = tiers[_tierId].whitelistRootHash;
         if (tierWhitelistRootHash != bytes32(0)) {
             require(checkTierWhitelist(_tierId, msg.sender, _merkleProof, _allocation), "Invalid proof");
@@ -311,7 +310,11 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
 
         uint256 totalCost = _amount * _price;  // in gwei
 
-        paymentToken.safeTransferFrom(msg.sender, address(this), totalCost);
+        if (address(paymentToken) == address(0)) {
+            require(msg.value == totalCost, "Incorrect ETH amount sent");
+        } else {
+            paymentToken.safeTransferFrom(msg.sender, address(this), totalCost);
+        }
 
         emit PurchasedInTier(msg.sender, _tierId, _amount, _promoCode);
     }
@@ -413,12 +416,23 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
         // leave the amount for withdrawalReferenceRewards
         // this function assumes that the rewards are valid
         // to make sure there are enough payment tokens to be withdrawn by the referrers
-        uint256 paymentTokenBal = paymentToken.balanceOf(address(this));
-        require(paymentTokenBal > 0, "No payment token to cash");
-        require(paymentTokenBal > totalRewardsUnclaimed, "Not enough payment token to cash");
-        uint256 withdrawAmount = paymentTokenBal - totalRewardsUnclaimed;
-        paymentToken.safeTransfer(_msgSender(), withdrawAmount);
-        emit Cash(_msgSender(), withdrawAmount, 0);
+        uint256 paymentAmount;
+    
+        if (address(paymentToken) == address(0)) {
+            paymentAmount = address(this).balance;
+            require(paymentAmount > 0, "No ETH to cash");
+            require(paymentAmount > totalRewardsUnclaimed, "Not enough ETH to cash");
+            uint256 withdrawAmount = paymentAmount - totalRewardsUnclaimed;
+            (bool success, ) = _msgSender().call{value: withdrawAmount}("");
+            require(success, "ETH transfer failed");
+        } else {
+            paymentAmount = paymentToken.balanceOf(address(this));
+            require(paymentAmount > 0, "No payment token to cash");
+            require(paymentAmount > totalRewardsUnclaimed, "Not enough payment token to cash");
+            uint256 withdrawAmount = paymentAmount - totalRewardsUnclaimed;
+            paymentToken.safeTransfer(_msgSender(), withdrawAmount);
+        }
+        emit Cash(_msgSender(), paymentAmount, 0);
     }
 
     // Returns true if user's allocation matches the one in merkle root, otherwise false
@@ -600,5 +614,10 @@ contract IFTieredSale is ReentrancyGuard, AccessControl, IFFundable {
     // util function
     function addressToString(address _addr) public pure returns (string memory) {
         return Strings.toHexString(uint256(uint160(_addr)), 20);
+    }
+
+    // receive function to accept ETH
+    receive() external payable {
+        require(address(paymentToken) == address(0), "Contract does not accept ETH directly");
     }
 }
