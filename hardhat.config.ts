@@ -27,7 +27,7 @@ module.exports = {
       {
         version: '0.8.9',
         settings: {
-          optimizer: { 
+          optimizer: {
             enabled: true,
             runs: 200,
           },
@@ -36,9 +36,9 @@ module.exports = {
       {
         version: '0.8.17',
         settings: {
-          optimizer: { 
+          optimizer: {
             enabled: true,
-            runs: 200,
+            runs: 100,
           },
         },
       },

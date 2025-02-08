@@ -219,7 +219,7 @@ contract IFTieredSale is AccessControl, IFFundable {
         bytes32[] calldata _merkleProof,
         string memory _promoCode,
         uint256 _allocation
-    ) public {
+    ) public payable {
         // Ensure promo codes are allowed for the tier and the promo code is valid
         require(!_isWalletPromoCode(_promoCode), "Purchase with whitelistedPurchaseInTierWithWalletCode");
         require(tiers[_tierId].allowPromoCode, "Promo code is not allowed for this tier");
@@ -357,17 +357,15 @@ contract IFTieredSale is AccessControl, IFFundable {
         return tokenSold;
     }
 
-    function withdrawAllPromoCodeRewards () public nonReentrant {
+    function withdrawAllPromoCodeRewards() public nonReentrant {
         address promoCodeOwner = msg.sender;
         require(claimRewardsEnabled, "Claim rewards is disabled");
 
-        // for each promo code owned by the address, withdraw the rewards
         string[] memory promoCodesOwned = ownerPromoCodes[promoCodeOwner];
         uint256 rewards = 0;
         for (uint i = 0; i < promoCodesOwned.length; i++) {
             PromoCode storage promo = promoCodes[promoCodesOwned[i]];
 
-            // it could be _masterOwnerAddress or _promoCodeOwnerAddress
             if (promo.promoCodeOwnerAddress == promoCodeOwner) {
                 rewards += promo.promoCodeOwnerEarnings;
                 promo.promoCodeOwnerEarnings = 0;
@@ -379,17 +377,21 @@ contract IFTieredSale is AccessControl, IFFundable {
         }
         require(rewards > 0, "No rewards available");
         totalRewardsUnclaimed -= rewards;
-        paymentToken.safeTransfer(msg.sender, rewards);
+    
+        if (address(paymentToken) == address(0)) {
+            (bool success,) = msg.sender.call{value: rewards}("");
+            require(success, "ETH transfer failed");
+        } else {
+            paymentToken.safeTransfer(msg.sender, rewards);
+        }
 
         emit ReferralRewardWithdrawn(msg.sender, rewards);
     }
 
-
-    function withdrawPromoCodeRewards (string memory _promoCode) public nonReentrant {
+    function withdrawPromoCodeRewards(string memory _promoCode) public nonReentrant {
         require(claimRewardsEnabled, "Claim rewards is disabled");
         string memory promoCode = _promoCode;
         if (_isWalletPromoCode(promoCode)) {
-            // can only claim wallet promo code of their own address
             require(validateWalletPromoCode(msg.sender), "Promo code address has not purchased a node");
             promoCode = addressToString(msg.sender);
         }
@@ -407,7 +409,13 @@ contract IFTieredSale is AccessControl, IFFundable {
 
         require(reward > 0, "No rewards available");
         totalRewardsUnclaimed -= reward;
-        paymentToken.safeTransfer(msg.sender, reward);
+
+        if (address(paymentToken) == address(0)) {
+            (bool success,) = msg.sender.call{value: reward}("");
+            require(success, "ETH transfer failed");
+        } else {
+            paymentToken.safeTransfer(msg.sender, reward);
+        }
 
         emit ReferralRewardWithdrawn(msg.sender, reward);
     }
@@ -482,18 +490,6 @@ contract IFTieredSale is AccessControl, IFFundable {
     }
 
     // ops functions
-    function haltAllTiers() public onlyOperator {
-        for (uint i = 0; i < tierIds.length; i++) {
-            tiers[tierIds[i]].isHalt = true;
-        }
-    }
-
-    function unhaltAllTiers() public onlyOperator {
-        for (uint i = 0; i < tierIds.length; i++) {
-            tiers[tierIds[i]].isHalt = false;
-        }
-    }
-
     function updateMaxTotalPurchasable(string memory _tierId, uint256 _maxTotalPurchasable) public onlyOperator {
         tiers[_tierId].maxTotalPurchasable = _maxTotalPurchasable;
     }
@@ -550,40 +546,7 @@ contract IFTieredSale is AccessControl, IFFundable {
         addressPromoCodeDiscountPercentage = _addressPromoCodeDiscountPercentage;
     }
 
-    function updatePromocode(
-        string memory _code,
-        uint8 _discountPercentage,
-        address _promoCodeOwnerAddress,
-        address _masterOwnerAddress,
-        uint8 _baseOwnerPercentageOverride,
-        uint8 _masterOwnerPercentageOverride
-     ) public onlyOwner {
-        // ok to update address promo code
-        _validatePromoCodeSetting(_code, _discountPercentage, _promoCodeOwnerAddress, _masterOwnerAddress, _baseOwnerPercentageOverride, _masterOwnerPercentageOverride);
-        promoCodes[_code].discountPercentage = _discountPercentage;
-        promoCodes[_code].promoCodeOwnerAddress = _promoCodeOwnerAddress;
-        promoCodes[_code].masterOwnerAddress = _masterOwnerAddress;
-        promoCodes[_code].baseOwnerPercentageOverride = _baseOwnerPercentageOverride;
-        promoCodes[_code].masterOwnerPercentageOverride = _masterOwnerPercentageOverride;
-    }
-
     // view function for ops
-    function getAllPromoCodeInfo(uint256 fromIdx, uint256 toIdx) public view returns (PromoCode[] memory) {
-        require(fromIdx < toIdx, "Invalid range");
-        if (toIdx > allPromoCodes.length) {
-            toIdx = allPromoCodes.length;
-        }
-        PromoCode[] memory promoCodeInfos = new PromoCode[](toIdx - fromIdx);
-        for (uint i = fromIdx; i < toIdx; i++) {
-            promoCodeInfos[i - fromIdx] = promoCodes[allPromoCodes[i]];
-        }
-        return promoCodeInfos;
-    }
-
-    function getPromoCodeLength() public view returns (uint256) {
-        return allPromoCodes.length;
-    }
-
     function getAllPromoCodes(uint256 fromIdx, uint256 toIdx) public view returns (string[] memory) {
         require(fromIdx < toIdx, "Invalid range");
         if (toIdx > allPromoCodes.length) {
@@ -592,15 +555,6 @@ contract IFTieredSale is AccessControl, IFFundable {
         string[] memory promoCodeList = new string[](toIdx - fromIdx);
         for (uint i = fromIdx; i < toIdx; i++) {
             promoCodeList[i] = allPromoCodes[i];
-        }
-        return promoCodeList;
-    }
-
-    function getOwnerPromoCodes(address owner) public view returns (string[] memory) {
-        uint256 length = ownerPromoCodes[owner].length;
-        string[] memory promoCodeList = new string[](length);
-        for (uint i = 0; i < length; i++) {
-            promoCodeList[i] = ownerPromoCodes[owner][i];
         }
         return promoCodeList;
     }

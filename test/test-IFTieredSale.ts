@@ -827,5 +827,151 @@ describe('TieredSale Contract', function () {
             )
         })
     })
+    describe('tiered sale: ETH referral rewards withdrawal', function () {
+        beforeEach(async function () {
+            const TieredSaleFactory = await ethers.getContractFactory('IFTieredSale')
+            tieredSale = await TieredSaleFactory.deploy(
+                ethers.constants.AddressZero, // Zero address for ETH payments
+                saleToken.address,
+                startTime,
+                endTime
+            )
+            await tieredSale.deployed()
+            await saleToken.mint(tieredSale.address, fundAmount)
+            await tieredSale.addOperator(operator.getAddress())
+        })
+
+        it('should allow withdrawing ETH rewards from single promo code', async function () {
+            await tieredSale.connect(operator).setTier(...await prepareTierArgs({
+                ...defaultTierSettings,
+                allowPromoCode: true,
+                maxAllocationPerWallet: 100,
+            }))
+            await tieredSale.connect(operator).addPromoCode('ETHREWARD', 5, referrer.address, operator.address, 0, 0)
+            await tieredSale.connect(operator).updateClaimRewardsEnabled(true)
+
+            mineTimeDelta(START_TIME_DELTA)
+
+            // Purchase with ETH
+            const purchaseAmount = 5
+            const price = ethers.utils.parseEther('1')
+            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+                tierId,
+                purchaseAmount,
+                [],
+                'ETHREWARD',
+                100,
+                { value: price.mul(purchaseAmount).mul(95).div(100) } // 5% discount
+            )
+
+            const beforeBalance = await ethers.provider.getBalance(referrer.address)
+            const tx = await tieredSale.connect(referrer).withdrawPromoCodeRewards('ETHREWARD')
+            const receipt = await tx.wait()
+            const gasUsed = receipt.gasUsed.mul(receipt.effectiveGasPrice)
+
+            const afterBalance = await ethers.provider.getBalance(referrer.address)
+            expect(afterBalance.sub(beforeBalance).add(gasUsed)).to.be.above(0)
+        })
+
+        it('should allow withdrawing ETH rewards from all promo codes', async function () {
+            await tieredSale.connect(operator).setTier(...await prepareTierArgs({
+                ...defaultTierSettings,
+                allowPromoCode: true,
+                maxAllocationPerWallet: 100,
+            }))
+
+            // Add multiple promo codes
+            const codes = ['ETH1', 'ETH2']
+            for (const code of codes) {
+                await tieredSale.connect(operator).addPromoCode(code, 5, referrer.address, operator.address, 0, 0)
+            }
+            await tieredSale.connect(operator).updateClaimRewardsEnabled(true)
+
+            mineTimeDelta(START_TIME_DELTA)
+
+            // Make purchases with both codes
+            const purchaseAmount = 3
+            const price = ethers.utils.parseEther('1')
+            for (const code of codes) {
+                await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+                    tierId,
+                    purchaseAmount,
+                    [],
+                    code,
+                    100,
+                    { value: price.mul(purchaseAmount).mul(95).div(100) } // 5% discount
+                )
+            }
+
+            const beforeBalance = await ethers.provider.getBalance(referrer.address)
+            const tx = await tieredSale.connect(referrer).withdrawAllPromoCodeRewards()
+            const receipt = await tx.wait()
+            const gasUsed = receipt.gasUsed.mul(receipt.effectiveGasPrice)
+
+            const afterBalance = await ethers.provider.getBalance(referrer.address)
+            expect(afterBalance.sub(beforeBalance).add(gasUsed)).to.be.above(0)
+        })
+    })
+    describe('tiered sale: ETH safe cash payment token', function () {
+        beforeEach(async function () {
+            const TieredSaleFactory = await ethers.getContractFactory('IFTieredSale')
+            tieredSale = await TieredSaleFactory.deploy(
+                ethers.constants.AddressZero,
+                saleToken.address,
+                startTime,
+                endTime
+            )
+            await tieredSale.deployed()
+            await saleToken.mint(tieredSale.address, fundAmount)
+            await tieredSale.addOperator(operator.getAddress())
+        })
+
+        it('should safely cash out ETH while reserving rewards', async function () {
+            await tieredSale.connect(operator).setTier(...await prepareTierArgs({
+                ...defaultTierSettings,
+                allowPromoCode: true,
+                maxAllocationPerWallet: 100,
+            }))
+            await tieredSale.connect(operator).addPromoCode('SAFECASH', 5, referrer.address, operator.address, 0, 0)
+
+            mineTimeDelta(START_TIME_DELTA)
+
+            // Purchase with ETH to generate rewards
+            const purchaseAmount = 10
+            const price = ethers.utils.parseEther('1')
+            await tieredSale.connect(user).whitelistedPurchaseInTierWithCode(
+                tierId,
+                purchaseAmount,
+                [],
+                'SAFECASH',
+                100,
+                { value: price.mul(purchaseAmount).mul(95).div(100) }
+            )
+
+            const beforeBalance = await ethers.provider.getBalance(deployer.address)
+            const contractBalance = await ethers.provider.getBalance(tieredSale.address)
+            const unclaimedRewards = await tieredSale.totalRewardsUnclaimed()
+
+            const tx = await tieredSale.connect(deployer).safeCashPaymentToken()
+            const receipt = await tx.wait()
+            const gasUsed = receipt.gasUsed.mul(receipt.effectiveGasPrice)
+
+            await tieredSale.connect(operator).updateClaimRewardsEnabled(true)
+            const afterBalance = await ethers.provider.getBalance(deployer.address)
+            const expectedWithdraw = contractBalance.sub(unclaimedRewards)
+
+            expect(afterBalance.sub(beforeBalance).add(gasUsed)).to.equal(expectedWithdraw)
+
+            // Verify referrer can still withdraw their rewards
+            const referrerBefore = await ethers.provider.getBalance(referrer.address)
+            const withdrawTx = await tieredSale.connect(referrer).withdrawPromoCodeRewards('SAFECASH')
+            const withdrawReceipt = await withdrawTx.wait()
+            const withdrawGas = withdrawReceipt.gasUsed.mul(withdrawReceipt.effectiveGasPrice)
+            const referrerAfter = await ethers.provider.getBalance(referrer.address)
+
+            expect(referrerAfter.sub(referrerBefore).add(withdrawGas)).to.be.above(0)
+        })
+
+    })
 
 })
