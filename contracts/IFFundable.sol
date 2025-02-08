@@ -55,7 +55,6 @@ abstract contract IFFundable is Ownable, ReentrancyGuard {
     uint32 public withdrawerCount;
 
     // --- CONSTRUCTOR
-
     constructor(
         ERC20 _paymentToken,
         ERC20 _saleToken,
@@ -65,7 +64,6 @@ abstract contract IFFundable is Ownable, ReentrancyGuard {
     ) {
         // saleToken shouldn't be the same as paymentToken
         require(_saleToken != _paymentToken, 'saleToken = paymentToken');
-        // when salePrice != 0, paymentToken and maxTotalPayment shouldn't be 0
         // sale token cannot be 0
         require(address(_saleToken) != address(0), '0x0 saleToken');
         // start timestamp must be in future
@@ -78,7 +76,7 @@ abstract contract IFFundable is Ownable, ReentrancyGuard {
         require(_funder != address(0), '0x0 funder');
         funder = _funder;
 
-        paymentToken = _paymentToken; // can be 0 (for giveaway)
+        paymentToken = _paymentToken; // can be 0 (for ETH payments)
         saleToken = _saleToken;
         startTime = _startTime;
         endTime = _endTime;
@@ -175,19 +173,25 @@ abstract contract IFFundable is Ownable, ReentrancyGuard {
         emit Fund(_msgSender(), amount);
     }
 
-
     // Function for funder to cash in payment token and unsold sale token
     function cash() external onlyCasherOrOwner onlyAfterSale {
         // prevent repeat cash
         require(!hasCashed, 'already cashed');
-
         hasCashed = true;
 
-        // get amount of payment token received
-        uint256 paymentTokenBal = paymentToken.balanceOf(address(this));
-
-        // transfer all
-        paymentToken.safeTransfer(_msgSender(), paymentTokenBal);
+        uint256 paymentAmount;
+        if (address(paymentToken) == address(0)) {
+            // get amount of ETH received
+            paymentAmount = address(this).balance;
+            // transfer all ETH
+            (bool sent,) = _msgSender().call{value: paymentAmount}("");
+            require(sent, "Failed to send ETH");
+        } else {
+            // get amount of payment token received
+            paymentAmount = paymentToken.balanceOf(address(this));
+            // transfer all
+            paymentToken.safeTransfer(_msgSender(), paymentAmount);
+        }
 
         // get amount of sale token on contract
         uint256 saleTokenBal = saleToken.balanceOf(address(this));
@@ -206,36 +210,28 @@ abstract contract IFFundable is Ownable, ReentrancyGuard {
         // transfer unsold
         saleToken.safeTransfer(_msgSender(), amountUnsold);
 
-        emit Cash(_msgSender(), paymentTokenBal, amountUnsold);
+        emit Cash(_msgSender(), paymentAmount, amountUnsold);
     }
 
     function cashPaymentToken(uint256 amount) external onlyCasherOrOwner {
-        // Get amount of payment token received
-        uint256 paymentTokenBal = paymentToken.balanceOf(address(this));
-
-        // Ensure there's enough payment tokens to cash
-        require(paymentTokenBal >= amount, "No enough payment tokens to cash");
-
-        // Transfer payment tokens to the caller
-        paymentToken.safeTransfer(_msgSender(), amount);
+        if (address(paymentToken) == address(0)) {
+            // Check ETH balance
+            require(address(this).balance >= amount, "Not enough ETH balance");
+            // Transfer ETH
+            (bool sent,) = _msgSender().call{value: amount}("");
+            require(sent, "Failed to send ETH");
+        } else {
+            // Get amount of payment token received
+            uint256 paymentTokenBal = paymentToken.balanceOf(address(this));
+            // Ensure there's enough payment tokens to cash
+            require(paymentTokenBal >= amount, "No enough payment tokens to cash");
+            // Transfer payment tokens to the caller
+            paymentToken.safeTransfer(_msgSender(), amount);
+        }
 
         // Emit an event for this cashing
         emit Cash(_msgSender(), amount, 0);
     }
-
-    function cashAllPaymentToken() external onlyCasherOrOwner {
-        // Get amount of payment token received
-        uint256 paymentTokenBal = paymentToken.balanceOf(address(this));
-
-        // not to revert if there's no payment token to facilitate operation
-
-        // Transfer payment tokens to the caller
-        paymentToken.safeTransfer(_msgSender(), paymentTokenBal);
-
-        // Emit an event for this cashing
-        emit Cash(_msgSender(), paymentTokenBal, 0);
-    }
-
 
     // Retrieve tokens erroneously sent in to this address
     function emergencyTokenRetrieve(address token) public onlyOwner onlyAfterSale {

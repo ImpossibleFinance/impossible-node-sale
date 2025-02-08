@@ -86,11 +86,8 @@ abstract contract IFPurchasable is Ownable, ReentrancyGuard {
         uint256 _maxTotalPayment
     ) {
         require(
-            _salePrice == 0 ||
-                (_salePrice != 0 &&
-                    address(_paymentToken) != address(0) &&
-                    _maxTotalPayment >= _salePrice),
-            'paymentToken or maxTotalPayment should not be 0 when salePrice is not 0'
+            _salePrice == 0 || _maxTotalPayment >= _salePrice,
+            'maxTotalPayment should not be lower than salePrice'
         );
         salePrice = _salePrice; // can be 0 (for giveaway)
         paymentToken = _paymentToken; // can be 0 (for giveaway)
@@ -124,7 +121,7 @@ abstract contract IFPurchasable is Ownable, ReentrancyGuard {
 
     // --- PURCHASE
 
-    function purchase(uint256 paymentAmount) virtual public {}
+    function purchase(uint256 paymentAmount) virtual public payable {}
 
     // Internal function for making purchase
     // Used by public functions `purchase`
@@ -149,7 +146,12 @@ abstract contract IFPurchasable is Ownable, ReentrancyGuard {
         paymentReceived[_msgSender()] += paymentAmount;
 
         // transfer specified amount from user to this contract
-        paymentToken.safeTransferFrom(_msgSender(), address(this), paymentAmount);
+        if (address(paymentToken) == address(0)) {
+            require(msg.value == paymentAmount, 'incorrect ETH amount');
+        } else {
+            require(msg.value == 0, 'ETH not accepted for ERC20 sales');
+            paymentToken.safeTransferFrom(_msgSender(), address(this), paymentAmount);
+        }
 
         emit Purchase(_msgSender(), paymentAmount);
     }
@@ -185,5 +187,9 @@ abstract contract IFPurchasable is Ownable, ReentrancyGuard {
         paymentReceivedWithEachCode[_msgSender()][code] += paymentAmount;
 
         emit PurchaseWithCode(_msgSender(), paymentAmount, code);
+    }
+
+    receive() external payable {
+        require(address(paymentToken) == address(0), 'ETH not accepted');
     }
 }

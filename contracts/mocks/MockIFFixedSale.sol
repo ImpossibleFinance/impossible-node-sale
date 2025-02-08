@@ -26,13 +26,14 @@ contract MockIFFixedSale is IFFixedSale {
         )
     {}
 
-    function purchase(uint256 paymentAmount) public override {
+    function purchase(uint256 paymentAmount) public payable override {
         // Skip merkle check and set max allocation
         _purchase(paymentAmount, type(uint256).max);
     }
 
     function purchaseWithCode(uint256 paymentAmount, string memory code)
         public
+        payable
     {
         // Skip merkle check and set max allocation
         _purchaseWithCode(paymentAmount, type(uint256).max, code);

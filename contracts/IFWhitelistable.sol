@@ -46,7 +46,7 @@ abstract contract IFWhitelistable is Ownable, ReentrancyGuard {
     }
 
     // purchase function when there is a whitelist
-    function whitelistedPurchase(uint256 paymentAmount, bytes32[] calldata merkleProof) virtual public {}
+    function whitelistedPurchase(uint256 paymentAmount, bytes32[] calldata merkleProof) virtual public payable {}
 
     function withdrawGiveaway(bytes32[] calldata merkleProof) virtual public nonReentrant {}
 }

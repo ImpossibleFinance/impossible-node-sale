@@ -63,7 +63,7 @@ contract IFSale is IFPurchasable, IFVestable, IFFundable, IFWhitelistable {
 
     // --- PURCHASE
 
-    function purchase(uint256 paymentAmount) virtual override public onlyDuringSale {
+    function purchase(uint256 paymentAmount) virtual override public payable onlyDuringSale {
         require(whitelistRootHash == 0, 'use whitelistedPurchase');
         _purchase(paymentAmount, maxTotalPayment);
     }
@@ -72,7 +72,7 @@ contract IFSale is IFPurchasable, IFVestable, IFFundable, IFWhitelistable {
     function whitelistedPurchase(
         uint256 paymentAmount,
         bytes32[] calldata merkleProof
-    ) virtual override public onlyDuringSale {
+    ) virtual override public payable onlyDuringSale {
         // the user has to be whitelisted
         require(checkWhitelist(_msgSender(), merkleProof), 'proof invalid');
         _purchase(paymentAmount, maxTotalPayment);
